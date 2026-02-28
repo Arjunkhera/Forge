@@ -30,4 +30,6 @@ __exportStar(require("./resolver/index.js"), exports);
 __exportStar(require("./workspace/index.js"), exports);
 // Compiler
 __exportStar(require("./compiler/index.js"), exports);
+// Global Config
+__exportStar(require("./config/index.js"), exports);
 //# sourceMappingURL=index.js.map

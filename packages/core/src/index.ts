@@ -16,3 +16,6 @@ export * from './workspace/index.js';
 
 // Compiler
 export * from './compiler/index.js';
+
+// Global Config
+export * from './config/index.js';

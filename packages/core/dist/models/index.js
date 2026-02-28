@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.LockedArtifactSchema = exports.LockFileSchema = exports.RegistryConfigSchema = exports.ForgeConfigSchema = exports.PluginMetaSchema = exports.AgentMetaSchema = exports.SemVerRangeSchema = exports.SemVerSchema = exports.SkillMetaSchema = void 0;
+exports.LockedArtifactSchema = exports.LockFileSchema = exports.GlobalConfigSchema = exports.RegistryConfigSchema = exports.ForgeConfigSchema = exports.PluginMetaSchema = exports.AgentMetaSchema = exports.SemVerRangeSchema = exports.SemVerSchema = exports.SkillMetaSchema = void 0;
 // Skill Meta
 var skill_meta_js_1 = require("./skill-meta.js");
 Object.defineProperty(exports, "SkillMetaSchema", { enumerable: true, get: function () { return skill_meta_js_1.SkillMetaSchema; } });
@@ -16,6 +16,9 @@ Object.defineProperty(exports, "PluginMetaSchema", { enumerable: true, get: func
 var forge_config_js_1 = require("./forge-config.js");
 Object.defineProperty(exports, "ForgeConfigSchema", { enumerable: true, get: function () { return forge_config_js_1.ForgeConfigSchema; } });
 Object.defineProperty(exports, "RegistryConfigSchema", { enumerable: true, get: function () { return forge_config_js_1.RegistryConfigSchema; } });
+// Global Config
+var global_config_js_1 = require("./global-config.js");
+Object.defineProperty(exports, "GlobalConfigSchema", { enumerable: true, get: function () { return global_config_js_1.GlobalConfigSchema; } });
 // Lock File
 var lock_file_js_1 = require("./lock-file.js");
 Object.defineProperty(exports, "LockFileSchema", { enumerable: true, get: function () { return lock_file_js_1.LockFileSchema; } });

@@ -21,6 +21,12 @@ export {
   type Target,
 } from './forge-config.js';
 
+// Global Config
+export {
+  GlobalConfigSchema,
+  type GlobalConfig,
+} from './global-config.js';
+
 // Lock File
 export {
   LockFileSchema,

@@ -15,11 +15,16 @@ export interface InstallOptions {
  * await forge.add('skill:developer@1.0.0');
  * const report = await forge.install();
  */
+export interface ForgeCoreOptions {
+    /** Override the global config path (default: ~/.forge/config.yaml). Useful for testing. */
+    globalConfigPath?: string;
+}
 export declare class ForgeCore {
     private readonly workspaceRoot;
     private readonly workspaceManager;
     private readonly compiler;
-    constructor(workspaceRoot?: string);
+    private readonly globalConfigPath;
+    constructor(workspaceRoot?: string, options?: ForgeCoreOptions);
     /**
      * Initialize a new Forge workspace.
      * Creates forge.yaml and forge.lock.
@@ -56,7 +61,10 @@ export declare class ForgeCore {
      */
     getConfig(): Promise<ForgeConfig>;
     private buildRegistry;
-    private resolveRegistryPath;
+    /**
+     * Instantiate the correct DataAdapter for a registry config entry.
+     */
+    private buildAdapter;
     private parseRef;
 }
 export { Registry } from './registry/registry.js';

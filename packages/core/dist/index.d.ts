@@ -5,4 +5,5 @@ export * from './adapters/index.js';
 export * from './resolver/index.js';
 export * from './workspace/index.js';
 export * from './compiler/index.js';
+export * from './config/index.js';
 //# sourceMappingURL=index.d.ts.map

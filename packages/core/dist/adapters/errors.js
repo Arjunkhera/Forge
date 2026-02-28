@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UnsupportedTargetError = exports.VersionMismatchError = exports.CircularDependencyError = exports.InvalidMetadataError = exports.ArtifactNotFoundError = exports.ForgeError = void 0;
+exports.UnsupportedTargetError = exports.AllAdaptersFailedError = exports.AdapterError = exports.VersionMismatchError = exports.CircularDependencyError = exports.InvalidMetadataError = exports.ArtifactNotFoundError = exports.ForgeError = void 0;
 /**
  * Base error for all Forge errors.
  */
@@ -57,6 +57,33 @@ class VersionMismatchError extends ForgeError {
     }
 }
 exports.VersionMismatchError = VersionMismatchError;
+/**
+ * Thrown when a DataAdapter encounters an error during operation.
+ * Used by CompositeAdapter to wrap and report failures across multiple sources.
+ *
+ * @example
+ * throw new AdapterError('git-registry', 'Clone failed: repository not found', 'Check the registry URL in forge.yaml');
+ */
+class AdapterError extends ForgeError {
+    constructor(adapterName, detail, suggestion) {
+        super('ADAPTER_ERROR', `Adapter '${adapterName}' failed: ${detail}`, suggestion ?? `Check that the '${adapterName}' registry is accessible and properly configured`);
+        this.name = 'AdapterError';
+    }
+}
+exports.AdapterError = AdapterError;
+/**
+ * Thrown when all adapters in a CompositeAdapter fail to find an artifact.
+ *
+ * @example
+ * throw new AllAdaptersFailedError('skill', 'developer', ['local', 'git-remote']);
+ */
+class AllAdaptersFailedError extends ForgeError {
+    constructor(type, id, sourcesTried) {
+        super('ALL_ADAPTERS_FAILED', `Artifact '${type}:${id}' not found in any registry. Sources tried: ${sourcesTried.join(', ')}`, `Run 'forge search ${id}' to check availability, or add a registry that contains this artifact`);
+        this.name = 'AllAdaptersFailedError';
+    }
+}
+exports.AllAdaptersFailedError = AllAdaptersFailedError;
 /**
  * Thrown when a compiler target is not supported.
  */

@@ -5,6 +5,9 @@ import { Resolver } from './resolver/resolver.js';
 import { Compiler } from './compiler/compiler.js';
 import { ClaudeCodeStrategy } from './compiler/claude-code-strategy.js';
 import { FilesystemAdapter } from './adapters/filesystem-adapter.js';
+import { CompositeAdapter } from './adapters/composite-adapter.js';
+import { GitAdapter } from './adapters/git-adapter.js';
+import type { DataAdapter } from './adapters/types.js';
 import type {
   ArtifactRef,
   ArtifactSummary,
@@ -13,10 +16,10 @@ import type {
   SearchResult,
   ResolvedArtifact,
   LockFile,
-  LockedArtifact,
 } from './models/index.js';
 import type { ForgeConfig, RegistryConfig } from './models/forge-config.js';
 import { ForgeError } from './adapters/errors.js';
+import { loadGlobalConfig } from './config/global-config-loader.js';
 
 export interface InstallOptions {
   target?: ForgeConfig['target'];
@@ -34,14 +37,24 @@ export interface InstallOptions {
  * await forge.add('skill:developer@1.0.0');
  * const report = await forge.install();
  */
+export interface ForgeCoreOptions {
+  /** Override the global config path (default: ~/.forge/config.yaml). Useful for testing. */
+  globalConfigPath?: string;
+}
+
 export class ForgeCore {
   private readonly workspaceManager: WorkspaceManager;
   private readonly compiler: Compiler;
+  private readonly globalConfigPath: string | undefined;
 
-  constructor(private readonly workspaceRoot: string = process.cwd()) {
+  constructor(
+    private readonly workspaceRoot: string = process.cwd(),
+    options?: ForgeCoreOptions,
+  ) {
     this.workspaceManager = new WorkspaceManager(workspaceRoot);
     this.compiler = new Compiler();
     this.compiler.register(new ClaudeCodeStrategy());
+    this.globalConfigPath = options?.globalConfigPath;
   }
 
   /**
@@ -72,13 +85,7 @@ export class ForgeCore {
     for (const refStr of refs) {
       const ref = this.parseRef(refStr);
 
-      // Validate artifact exists
-      const exists = await new FilesystemAdapter(
-        this.resolveRegistryPath(config.registries[0])
-      ).exists(ref.type, ref.id);
-
-      // Even if not found locally, add to config (might be installed via HTTP later)
-      // But if we have a registry, do a best-effort check
+      // Best-effort check: warn if artifact not found in any registry
       if (config.registries.length > 0) {
         try {
           await registry.get(ref);
@@ -245,30 +252,77 @@ export class ForgeCore {
     try {
       config = await this.workspaceManager.readConfig();
     } catch {
-      // No config — return empty registry backed by empty adapter
+      // No workspace config — return empty registry backed by local default
       return new Registry(new FilesystemAdapter(path.join(this.workspaceRoot, 'registry')));
     }
 
-    if (config.registries.length === 0) {
+    // Load global config (~/.forge/config.yaml) for fallback registries
+    const globalConfig = await loadGlobalConfig(this.globalConfigPath);
+
+    // Workspace registries first (higher priority), then global as fallbacks.
+    // Deduplicate by name — workspace overrides global.
+    const workspaceNames = new Set(config.registries.map(r => r.name));
+    const globalFallbacks = globalConfig.registries.filter(r => !workspaceNames.has(r.name));
+    const allRegistries = [...config.registries, ...globalFallbacks];
+
+    if (allRegistries.length === 0) {
       return new Registry(new FilesystemAdapter(path.join(this.workspaceRoot, 'registry')));
     }
 
-    // Use the first filesystem registry for now (CompositeAdapter in S010)
-    const fsRegistry = config.registries.find(r => r.type === 'filesystem');
-    const registryPath = fsRegistry
-      ? this.resolveRegistryPath(fsRegistry)
-      : path.join(this.workspaceRoot, 'registry');
+    // Build an adapter for each configured registry
+    const adapters: DataAdapter[] = [];
+    for (const reg of allRegistries) {
+      try {
+        adapters.push(this.buildAdapter(reg));
+      } catch (err) {
+        console.warn(`[ForgeCore] Skipping registry '${reg.name}': ${(err as Error).message}`);
+      }
+    }
 
-    return new Registry(new FilesystemAdapter(registryPath));
+    if (adapters.length === 0) {
+      // All registries failed to construct — fall back to local default
+      return new Registry(new FilesystemAdapter(path.join(this.workspaceRoot, 'registry')));
+    }
+
+    // Single adapter → use directly; multiple → compose with priority ordering
+    const adapter = adapters.length === 1
+      ? adapters[0]
+      : new CompositeAdapter({ adapters });
+
+    return new Registry(adapter);
   }
 
-  private resolveRegistryPath(registryConfig: RegistryConfig | undefined): string {
-    if (!registryConfig || registryConfig.type !== 'filesystem') {
-      return path.join(this.workspaceRoot, 'registry');
+  /**
+   * Instantiate the correct DataAdapter for a registry config entry.
+   */
+  private buildAdapter(reg: RegistryConfig): DataAdapter {
+    switch (reg.type) {
+      case 'filesystem': {
+        const registryPath = path.isAbsolute(reg.path)
+          ? reg.path
+          : path.join(this.workspaceRoot, reg.path);
+        return new FilesystemAdapter(registryPath);
+      }
+      case 'git': {
+        return new GitAdapter({
+          url: reg.url,
+          ref: reg.branch,
+          registryPath: reg.path,
+        });
+      }
+      case 'http':
+        throw new ForgeError(
+          'UNSUPPORTED',
+          `HTTP registries are not yet implemented (registry: '${reg.name}')`,
+          'Use a filesystem or git registry instead.',
+        );
+      default:
+        throw new ForgeError(
+          'INVALID_CONFIG',
+          `Unknown registry type in config`,
+          'Supported types: filesystem, git',
+        );
     }
-    return path.isAbsolute(registryConfig.path)
-      ? registryConfig.path
-      : path.join(this.workspaceRoot, registryConfig.path);
   }
 
   private parseRef(refStr: string): ArtifactRef {

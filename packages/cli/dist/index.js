@@ -6,6 +6,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const commander_1 = require("commander");
 const core_1 = require("@forge/core");
+const core_2 = require("@forge/core");
 const chalk_1 = __importDefault(require("chalk"));
 const cli_table3_1 = __importDefault(require("cli-table3"));
 const program = new commander_1.Command();
@@ -199,6 +200,93 @@ program
     catch (err) {
         console.error(chalk_1.default.red(`✗ Could not start MCP server: ${err.message}`));
         console.error(chalk_1.default.gray(`  Ensure @forge/mcp-server is installed`));
+        process.exit(1);
+    }
+});
+// forge config — global config management
+const configCmd = program
+    .command('config')
+    .description('Manage global Forge configuration (~/.forge/config.yaml)');
+// forge config add-registry
+configCmd
+    .command('add-registry')
+    .description('Add a registry to the global config')
+    .requiredOption('-n, --name <name>', 'Registry name')
+    .requiredOption('-t, --type <type>', 'Registry type (filesystem|git)')
+    .option('-u, --url <url>', 'Git clone URL (required for git type)')
+    .option('-p, --path <path>', 'Path or registry subdirectory', 'registry')
+    .option('-b, --branch <branch>', 'Git branch', 'main')
+    .action(async (options) => {
+    try {
+        let registryConfig;
+        if (options.type === 'filesystem') {
+            registryConfig = { type: 'filesystem', name: options.name, path: options.path };
+        }
+        else if (options.type === 'git') {
+            if (!options.url) {
+                console.error(chalk_1.default.red('✗ --url is required for git registries'));
+                process.exit(1);
+            }
+            registryConfig = { type: 'git', name: options.name, url: options.url, branch: options.branch, path: options.path };
+        }
+        else {
+            console.error(chalk_1.default.red(`✗ Unsupported registry type: ${options.type}`));
+            process.exit(1);
+        }
+        const parsed = core_2.RegistryConfigSchema.parse(registryConfig);
+        const config = await (0, core_1.addGlobalRegistry)(parsed);
+        console.log(chalk_1.default.green(`✓ Added registry '${options.name}' to global config`));
+        console.log(chalk_1.default.gray(`  ${core_1.GLOBAL_CONFIG_PATH}`));
+        console.log(chalk_1.default.gray(`  Total registries: ${config.registries.length}`));
+    }
+    catch (err) {
+        console.error(chalk_1.default.red(`✗ ${err.message}`));
+        process.exit(1);
+    }
+});
+// forge config remove-registry <name>
+configCmd
+    .command('remove-registry <name>')
+    .description('Remove a registry from the global config')
+    .action(async (name) => {
+    try {
+        const config = await (0, core_1.removeGlobalRegistry)(name);
+        console.log(chalk_1.default.green(`✓ Removed registry '${name}' from global config`));
+        console.log(chalk_1.default.gray(`  Remaining registries: ${config.registries.length}`));
+    }
+    catch (err) {
+        console.error(chalk_1.default.red(`✗ ${err.message}`));
+        process.exit(1);
+    }
+});
+// forge config list
+configCmd
+    .command('list')
+    .description('Show the current global config')
+    .action(async () => {
+    try {
+        const config = await (0, core_1.loadGlobalConfig)();
+        if (config.registries.length === 0) {
+            console.log(chalk_1.default.yellow('No global registries configured'));
+            console.log(chalk_1.default.gray(`  Config: ${core_1.GLOBAL_CONFIG_PATH}`));
+            return;
+        }
+        console.log(chalk_1.default.bold('Global registries:'));
+        const table = new cli_table3_1.default({
+            head: [chalk_1.default.bold('Name'), chalk_1.default.bold('Type'), chalk_1.default.bold('Location')],
+            colWidths: [20, 12, 50],
+        });
+        for (const reg of config.registries) {
+            const location = reg.type === 'filesystem' ? reg.path
+                : reg.type === 'git' ? reg.url
+                    : reg.url;
+            table.push([reg.name, reg.type, location]);
+        }
+        console.log(table.toString());
+        console.log(chalk_1.default.gray(`  Config: ${core_1.GLOBAL_CONFIG_PATH}`));
+    }
+    catch (err) {
+        console.error(chalk_1.default.red(`✗ ${err.message}`));
         process.exit(1);
     }
 });

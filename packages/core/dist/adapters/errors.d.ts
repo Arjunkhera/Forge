@@ -32,6 +32,25 @@ export declare class VersionMismatchError extends ForgeError {
     constructor(id: string, requested: string, available: string[]);
 }
 /**
+ * Thrown when a DataAdapter encounters an error during operation.
+ * Used by CompositeAdapter to wrap and report failures across multiple sources.
+ *
+ * @example
+ * throw new AdapterError('git-registry', 'Clone failed: repository not found', 'Check the registry URL in forge.yaml');
+ */
+export declare class AdapterError extends ForgeError {
+    constructor(adapterName: string, detail: string, suggestion?: string);
+}
+/**
+ * Thrown when all adapters in a CompositeAdapter fail to find an artifact.
+ *
+ * @example
+ * throw new AllAdaptersFailedError('skill', 'developer', ['local', 'git-remote']);
+ */
+export declare class AllAdaptersFailedError extends ForgeError {
+    constructor(type: string, id: string, sourcesTried: string[]);
+}
+/**
  * Thrown when a compiler target is not supported.
  */
 export declare class UnsupportedTargetError extends ForgeError {

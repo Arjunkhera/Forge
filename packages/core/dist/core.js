@@ -11,26 +11,21 @@ const resolver_js_1 = require("./resolver/resolver.js");
 const compiler_js_1 = require("./compiler/compiler.js");
 const claude_code_strategy_js_1 = require("./compiler/claude-code-strategy.js");
 const filesystem_adapter_js_1 = require("./adapters/filesystem-adapter.js");
+const composite_adapter_js_1 = require("./adapters/composite-adapter.js");
+const git_adapter_js_1 = require("./adapters/git-adapter.js");
 const errors_js_1 = require("./adapters/errors.js");
-/**
- * Main orchestration class for Forge. Wires together Registry, Resolver,
- * Compiler, and WorkspaceManager. Both the CLI and MCP server call this.
- *
- * @example
- * const forge = new ForgeCore('./my-workspace');
- * await forge.init('my-workspace');
- * await forge.add('skill:developer@1.0.0');
- * const report = await forge.install();
- */
+const global_config_loader_js_1 = require("./config/global-config-loader.js");
 class ForgeCore {
     workspaceRoot;
     workspaceManager;
     compiler;
-    constructor(workspaceRoot = process.cwd()) {
+    globalConfigPath;
+    constructor(workspaceRoot = process.cwd(), options) {
         this.workspaceRoot = workspaceRoot;
         this.workspaceManager = new workspace_manager_js_1.WorkspaceManager(workspaceRoot);
         this.compiler = new compiler_js_1.Compiler();
         this.compiler.register(new claude_code_strategy_js_1.ClaudeCodeStrategy());
+        this.globalConfigPath = options?.globalConfigPath;
     }
     /**
      * Initialize a new Forge workspace.
@@ -56,10 +51,7 @@ class ForgeCore {
         const registry = await this.buildRegistry();
         for (const refStr of refs) {
             const ref = this.parseRef(refStr);
-            // Validate artifact exists
-            const exists = await new filesystem_adapter_js_1.FilesystemAdapter(this.resolveRegistryPath(config.registries[0])).exists(ref.type, ref.id);
-            // Even if not found locally, add to config (might be installed via HTTP later)
-            // But if we have a registry, do a best-effort check
+            // Best-effort check: warn if artifact not found in any registry
             if (config.registries.length > 0) {
                 try {
                     await registry.get(ref);
@@ -207,26 +199,62 @@ class ForgeCore {
             config = await this.workspaceManager.readConfig();
         }
         catch {
-            // No config — return empty registry backed by empty adapter
+            // No workspace config — return empty registry backed by local default
             return new registry_js_1.Registry(new filesystem_adapter_js_1.FilesystemAdapter(path_1.default.join(this.workspaceRoot, 'registry')));
         }
-        if (config.registries.length === 0) {
+        // Load global config (~/.forge/config.yaml) for fallback registries
+        const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
+        // Workspace registries first (higher priority), then global as fallbacks.
+        // Deduplicate by name — workspace overrides global.
+        const workspaceNames = new Set(config.registries.map(r => r.name));
+        const globalFallbacks = globalConfig.registries.filter(r => !workspaceNames.has(r.name));
+        const allRegistries = [...config.registries, ...globalFallbacks];
+        if (allRegistries.length === 0) {
             return new registry_js_1.Registry(new filesystem_adapter_js_1.FilesystemAdapter(path_1.default.join(this.workspaceRoot, 'registry')));
         }
-        // Use the first filesystem registry for now (CompositeAdapter in S010)
-        const fsRegistry = config.registries.find(r => r.type === 'filesystem');
-        const registryPath = fsRegistry
-            ? this.resolveRegistryPath(fsRegistry)
-            : path_1.default.join(this.workspaceRoot, 'registry');
-        return new registry_js_1.Registry(new filesystem_adapter_js_1.FilesystemAdapter(registryPath));
+        // Build an adapter for each configured registry
+        const adapters = [];
+        for (const reg of allRegistries) {
+            try {
+                adapters.push(this.buildAdapter(reg));
+            }
+            catch (err) {
+                console.warn(`[ForgeCore] Skipping registry '${reg.name}': ${err.message}`);
+            }
+        }
+        if (adapters.length === 0) {
+            // All registries failed to construct — fall back to local default
+            return new registry_js_1.Registry(new filesystem_adapter_js_1.FilesystemAdapter(path_1.default.join(this.workspaceRoot, 'registry')));
+        }
+        // Single adapter → use directly; multiple → compose with priority ordering
+        const adapter = adapters.length === 1
+            ? adapters[0]
+            : new composite_adapter_js_1.CompositeAdapter({ adapters });
+        return new registry_js_1.Registry(adapter);
     }
-    resolveRegistryPath(registryConfig) {
-        if (!registryConfig || registryConfig.type !== 'filesystem') {
-            return path_1.default.join(this.workspaceRoot, 'registry');
+    /**
+     * Instantiate the correct DataAdapter for a registry config entry.
+     */
+    buildAdapter(reg) {
+        switch (reg.type) {
+            case 'filesystem': {
+                const registryPath = path_1.default.isAbsolute(reg.path)
+                    ? reg.path
+                    : path_1.default.join(this.workspaceRoot, reg.path);
+                return new filesystem_adapter_js_1.FilesystemAdapter(registryPath);
+            }
+            case 'git': {
+                return new git_adapter_js_1.GitAdapter({
+                    url: reg.url,
+                    ref: reg.branch,
+                    registryPath: reg.path,
+                });
+            }
+            case 'http':
+                throw new errors_js_1.ForgeError('UNSUPPORTED', `HTTP registries are not yet implemented (registry: '${reg.name}')`, 'Use a filesystem or git registry instead.');
+            default:
+                throw new errors_js_1.ForgeError('INVALID_CONFIG', `Unknown registry type in config`, 'Supported types: filesystem, git');
         }
-        return path_1.default.isAbsolute(registryConfig.path)
-            ? registryConfig.path
-            : path_1.default.join(this.workspaceRoot, registryConfig.path);
     }
     parseRef(refStr) {
         // Format: "type:id@version" or "type:id" or "id@version" or "id"
