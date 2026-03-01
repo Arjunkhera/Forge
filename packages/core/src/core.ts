@@ -18,8 +18,12 @@ import type {
   LockFile,
 } from './models/index.js';
 import type { ForgeConfig, RegistryConfig } from './models/forge-config.js';
+import type { RepoIndex, RepoIndexEntry } from './models/repo-index.js';
 import { ForgeError } from './adapters/errors.js';
 import { loadGlobalConfig } from './config/global-config-loader.js';
+import { scan as repoScannerScan } from './repo/repo-scanner.js';
+import { loadRepoIndex, saveRepoIndex } from './repo/repo-index-store.js';
+import { RepoIndexQuery } from './repo/repo-index-query.js';
 
 export interface InstallOptions {
   target?: ForgeConfig['target'];
@@ -252,6 +256,71 @@ export class ForgeCore {
    */
   async getConfig(): Promise<ForgeConfig> {
     return this.workspaceManager.readConfig();
+  }
+
+  /**
+   * Scan configured directories for git repositories and update the index.
+   */
+  async repoScan(): Promise<RepoIndex> {
+    const globalConfig = await loadGlobalConfig(this.globalConfigPath);
+    const { scan_paths, index_path } = globalConfig.repos;
+    
+    if (scan_paths.length === 0) {
+      throw new Error('No scan paths configured. Run: forge config set repos.scan_paths ~/Repositories');
+    }
+    
+    const existing = await loadRepoIndex(index_path);
+    const index = await repoScannerScan(scan_paths, existing ?? undefined);
+    await saveRepoIndex(index, index_path);
+    return index;
+  }
+
+  /**
+   * List repositories from the index, optionally filtered by query.
+   */
+  async repoList(query?: string): Promise<RepoIndexEntry[]> {
+    const globalConfig = await loadGlobalConfig(this.globalConfigPath);
+    const { index_path, scan_paths } = globalConfig.repos;
+    
+    let index = await loadRepoIndex(index_path);
+    
+    // Auto-scan if no index exists and scan_paths configured
+    if (!index && scan_paths.length > 0) {
+      console.log('[Forge] No repo index found. Running initial scan...');
+      index = await this.repoScan();
+    }
+    
+    if (!index) return [];
+    
+    const query_obj = new RepoIndexQuery(index.repos);
+    return query ? query_obj.search(query) : query_obj.listAll();
+  }
+
+  /**
+   * Resolve a repository by name or remote URL.
+   */
+  async repoResolve(opts: { name?: string; remoteUrl?: string }): Promise<RepoIndexEntry | null> {
+    if (!opts.name && !opts.remoteUrl) {
+      throw new Error('Either name or remoteUrl must be provided');
+    }
+    
+    const globalConfig = await loadGlobalConfig(this.globalConfigPath);
+    const { index_path, scan_paths } = globalConfig.repos;
+    
+    let index = await loadRepoIndex(index_path);
+    
+    // Auto-scan if no index exists
+    if (!index && scan_paths.length > 0) {
+      console.log('[Forge] No repo index found. Running initial scan...');
+      index = await this.repoScan();
+    }
+    
+    if (!index) return null;
+    
+    const q = new RepoIndexQuery(index.repos);
+    if (opts.name) return q.findByName(opts.name);
+    if (opts.remoteUrl) return q.findByRemoteUrl(opts.remoteUrl);
+    return null;
   }
 
   // Internal helpers

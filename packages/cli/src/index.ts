@@ -201,6 +201,99 @@ program
     }
   });
 
+// forge repo — repository index management
+const repo = program.command('repo').description('Manage the local git repository index');
+
+repo
+  .command('scan')
+  .description('Scan configured directories for git repositories')
+  .action(async () => {
+    const forge = new ForgeCore(program.opts().config);
+    try {
+      const index = await forge.repoScan();
+      console.log(chalk.green(`✓ Scanned ${index.scanPaths.length} path(s), found ${index.repos.length} repositories`));
+    } catch (err: any) {
+      console.error(chalk.red(`✗ ${err.message}`));
+      if (err.suggestion) console.error(chalk.gray(`  Hint: ${err.suggestion}`));
+      process.exit(1);
+    }
+  });
+
+repo
+  .command('list')
+  .description('List all indexed repositories')
+  .option('-q, --query <query>', 'filter by name or URL')
+  .option('-l, --language <lang>', 'filter by language')
+  .action(async (options: { query?: string; language?: string }) => {
+    const forge = new ForgeCore(program.opts().config);
+    try {
+      let repos = await forge.repoList(options.query);
+      if (options.language) {
+        repos = repos.filter(r => r.language?.toLowerCase() === options.language!.toLowerCase());
+      }
+      if (repos.length === 0) {
+        console.log('No repositories found. Run: forge repo scan');
+        return;
+      }
+      const table = new Table({
+        head: [chalk.bold('Name'), chalk.bold('Path'), chalk.bold('Language'), chalk.bold('Last Commit')],
+        colWidths: [25, 35, 15, 15],
+      });
+      for (const r of repos) {
+        table.push([r.name, r.localPath, r.language ?? '—', r.lastCommitDate.slice(0, 10)]);
+      }
+      console.log(table.toString());
+    } catch (err: any) {
+      console.error(chalk.red(`✗ ${err.message}`));
+      process.exit(1);
+    }
+  });
+
+repo
+  .command('show <name>')
+  .description('Show details for a single repository')
+  .action(async (name: string) => {
+    const forge = new ForgeCore(program.opts().config);
+    try {
+      const entry = await forge.repoResolve({ name });
+      if (!entry) {
+        console.error(`Repository '${name}' not found. Run: forge repo scan`);
+        process.exit(1);
+      }
+      console.log(`Name:         ${entry.name}`);
+      console.log(`Path:         ${entry.localPath}`);
+      console.log(`Remote:       ${entry.remoteUrl ?? '(none)'}`);
+      console.log(`Branch:       ${entry.defaultBranch}`);
+      console.log(`Language:     ${entry.language ?? '—'}`);
+      console.log(`Framework:    ${entry.framework ?? '—'}`);
+      console.log(`Last Commit:  ${entry.lastCommitDate}`);
+      console.log(`Last Scanned: ${entry.lastScannedAt}`);
+    } catch (err: any) {
+      console.error(chalk.red(`✗ ${err.message}`));
+      process.exit(1);
+    }
+  });
+
+repo
+  .command('find <query>')
+  .description('Search for repositories by name or URL')
+  .action(async (query: string) => {
+    const forge = new ForgeCore(program.opts().config);
+    try {
+      const results = await forge.repoList(query);
+      if (results.length === 0) {
+        console.log('No matches found.');
+        return;
+      }
+      for (const r of results) {
+        console.log(`${r.name.padEnd(30)} ${r.localPath}`);
+      }
+    } catch (err: any) {
+      console.error(chalk.red(`✗ ${err.message}`));
+      process.exit(1);
+    }
+  });
+
 // forge serve — starts MCP server
 program
   .command('serve')

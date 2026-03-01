@@ -6,18 +6,20 @@ import {
   type CallToolRequest,
   type ListToolsRequest,
 } from '@modelcontextprotocol/sdk/types.js';
-import { ForgeCore } from '@forge/core';
+import { ForgeCore, type RepoIndexEntry } from '@forge/core';
 
 /**
  * Start the Forge MCP server.
  * Exposes ForgeCore operations as MCP tools for LLM consumption.
  *
  * Tools:
- *   forge_search  - Search registry for artifacts
- *   forge_add     - Add artifact to forge.yaml
- *   forge_install - Run full install pipeline
- *   forge_resolve - Resolve a single artifact ref
- *   forge_list    - List installed or available artifacts
+ *   forge_search        - Search registry for artifacts
+ *   forge_add           - Add artifact to forge.yaml
+ *   forge_install       - Run full install pipeline
+ *   forge_resolve       - Resolve a single artifact ref
+ *   forge_list          - List installed or available artifacts
+ *   forge_repo_list     - List repositories from index
+ *   forge_repo_resolve  - Resolve a repository by name or URL
  */
 export async function startMcpServer(workspaceRoot: string = process.cwd()): Promise<void> {
   const forge = new ForgeCore(workspaceRoot);
@@ -108,6 +110,42 @@ export async function startMcpServer(workspaceRoot: string = process.cwd()): Pro
               type: 'string',
               enum: ['installed', 'available'],
               description: 'Which artifacts to list',
+            },
+          },
+        },
+      },
+      {
+        name: 'forge_repo_list',
+        description:
+          'List repositories from the local index. Filter by query (name, path, or URL) and/or language. Automatically scans if no index exists.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Search query to filter repositories (optional)',
+            },
+            language: {
+              type: 'string',
+              description: 'Filter by programming language (optional)',
+            },
+          },
+        },
+      },
+      {
+        name: 'forge_repo_resolve',
+        description:
+          'Find a specific repository by name or remote URL. Automatically scans if no index exists.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            name: {
+              type: 'string',
+              description: 'Repository name to search for (optional)',
+            },
+            remoteUrl: {
+              type: 'string',
+              description: 'Remote URL (https or git@) to match against (optional)',
             },
           },
         },
@@ -208,6 +246,75 @@ export async function startMcpServer(workspaceRoot: string = process.cwd()): Pro
                 description: s.description,
                 tags: s.tags,
               })), null, 2),
+            }],
+          };
+        }
+
+        case 'forge_repo_list': {
+          const { query, language } = (args ?? {}) as { query?: string; language?: string };
+          let repos = await forge.repoList(query);
+          if (language) {
+            repos = repos.filter((r: RepoIndexEntry) => r.language?.toLowerCase() === language.toLowerCase());
+          }
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify(repos.map(r => ({
+                name: r.name,
+                localPath: r.localPath,
+                remoteUrl: r.remoteUrl,
+                defaultBranch: r.defaultBranch,
+                language: r.language,
+                framework: r.framework,
+                lastCommitDate: r.lastCommitDate,
+                lastScannedAt: r.lastScannedAt,
+              })), null, 2),
+            }],
+          };
+        }
+
+        case 'forge_repo_resolve': {
+          const { name, remoteUrl } = (args ?? {}) as { name?: string; remoteUrl?: string };
+          if (!name && !remoteUrl) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: true,
+                  message: 'Either name or remoteUrl must be provided',
+                }),
+              }],
+              isError: true,
+            };
+          }
+          const entry = await forge.repoResolve({ name, remoteUrl });
+          if (!entry) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: true,
+                  code: 'REPO_NOT_FOUND',
+                  message: 'Repository not found',
+                  suggestion: 'Run: forge repo scan',
+                }),
+              }],
+              isError: true,
+            };
+          }
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                name: entry.name,
+                localPath: entry.localPath,
+                remoteUrl: entry.remoteUrl,
+                defaultBranch: entry.defaultBranch,
+                language: entry.language,
+                framework: entry.framework,
+                lastCommitDate: entry.lastCommitDate,
+                lastScannedAt: entry.lastScannedAt,
+              }, null, 2),
             }],
           };
         }
