@@ -52,6 +52,18 @@ export {
   type LockedArtifact,
 } from './lock-file.js';
 
+// Workspace Record
+export {
+  WorkspaceStatusSchema,
+  WorkspaceRepoSchema,
+  WorkspaceRecordSchema,
+  WorkspaceStoreSchema,
+  type WorkspaceStatus,
+  type WorkspaceRepo,
+  type WorkspaceRecord,
+  type WorkspaceStore,
+} from './workspace-record.js';
+
 // Shared Types
 export type {
   ArtifactType,
@@ -67,3 +79,11 @@ export type {
   MergeReport,
   ArtifactSummary,
 } from './shared-types.js';
+
+// Repo Index
+export {
+  RepoIndexEntrySchema,
+  RepoIndexSchema,
+  type RepoIndexEntry,
+  type RepoIndex,
+} from './repo-index.js';
