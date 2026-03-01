@@ -1,19 +1,21 @@
 /**
- * Start the Forge MCP server.
- * Exposes ForgeCore operations as MCP tools for LLM consumption.
- *
- * Tools:
- *   forge_search        - Search registry for artifacts
- *   forge_add           - Add artifact to forge.yaml
- *   forge_install       - Run full install pipeline
- *   forge_resolve       - Resolve a single artifact ref
- *   forge_list          - List installed or available artifacts
- *   forge_repo_list     - List repositories from index
- *   forge_repo_resolve  - Resolve a repository by name or URL
- *   forge_workspace_create - Create a new workspace from config
- *   forge_workspace_list - List tracked workspaces
- *   forge_workspace_delete - Delete a workspace by ID
- *   forge_workspace_status - Get full details for a workspace
+ * Start the Forge MCP server on stdio transport.
+ * Used for local Claude Code integration.
  */
 export declare function startMcpServer(workspaceRoot?: string): Promise<void>;
+export interface HttpServerOptions {
+    port: number;
+    host: string;
+    workspaceRoot?: string;
+}
+/**
+ * Start the Forge MCP server on HTTP (StreamableHTTP) transport.
+ * Features:
+ *   - /health endpoint returning service status and uptime
+ *   - Graceful shutdown on SIGTERM/SIGINT
+ *   - JSON logging to stderr
+ *
+ * Used in Docker via `forge serve --transport http`.
+ */
+export declare function startMcpServerHttp(opts: HttpServerOptions): Promise<void>;
 //# sourceMappingURL=index.d.ts.map

@@ -552,12 +552,29 @@ workspace
 program
     .command('serve')
     .description('Start the Forge MCP server')
-    .action(async () => {
+    .option('--transport <mode>', 'Transport mode: stdio or http (default: stdio)', 'stdio')
+    .option('--port <port>', 'HTTP port (default: 8200, http transport only)', '8200')
+    .option('--host <host>', 'HTTP host (default: localhost, http transport only)', 'localhost')
+    .action(async (options) => {
     try {
         // Dynamically import mcp-server to avoid hard dep if not installed
-        const { startMcpServer } = await import('@forge/mcp-server');
+        const mcpServer = await import('@forge/mcp-server');
         const workspaceRoot = program.opts().config;
-        await startMcpServer(workspaceRoot);
+        if (options.transport === 'http') {
+            const port = parseInt(options.port, 10);
+            if (isNaN(port) || port < 1 || port > 65535) {
+                console.error(chalk_1.default.red(`✗ Invalid port: ${options.port}`));
+                process.exit(1);
+            }
+            await mcpServer.startMcpServerHttp({
+                port,
+                host: options.host,
+                workspaceRoot,
+            });
+        }
+        else {
+            await mcpServer.startMcpServer(workspaceRoot);
+        }
     }
     catch (err) {
         console.error(chalk_1.default.red(`✗ Could not start MCP server: ${err.message}`));
