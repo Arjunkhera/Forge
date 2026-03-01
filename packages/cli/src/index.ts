@@ -4,6 +4,8 @@ import { ForgeCore, loadGlobalConfig, saveGlobalConfig, addGlobalRegistry, remov
 import { RegistryConfigSchema } from '@forge/core';
 import chalk from 'chalk';
 import Table from 'cli-table3';
+import { promises as fs } from 'fs';
+import * as readline from 'readline';
 
 const program = new Command();
 
@@ -201,6 +203,199 @@ program
     }
   });
 
+
+// forge workspace — workspace management
+const workspace = program
+  .command('workspace')
+  .description('Manage Forge workspaces');
+
+// forge workspace list
+workspace
+  .command('list')
+  .description('List workspaces')
+  .option('--status <status>', 'Filter by status (active|paused|completed|archived)')
+  .option('--all', 'Include archived workspaces')
+  .action(async (options: { status?: string; all?: boolean }) => {
+    const forge = new ForgeCore(program.opts().config);
+    try {
+      let records = await forge.workspaceList(options.status ? { status: options.status } : undefined);
+      
+      // Filter out archived unless --all
+      if (!options.all) {
+        records = records.filter((r: any) => r.status !== 'archived');
+      }
+
+      if (records.length === 0) {
+        console.log(chalk.yellow('No workspaces found'));
+        return;
+      }
+
+      const table = new Table({
+        head: [
+          chalk.bold('ID'),
+          chalk.bold('Name'),
+          chalk.bold('Story'),
+          chalk.bold('Status'),
+          chalk.bold('Last Accessed'),
+          chalk.bold('Path'),
+        ],
+        colWidths: [12, 25, 15, 12, 20, 50],
+      });
+
+      for (const r of records) {
+        const lastAccessed = new Date(r.lastAccessedAt).toLocaleDateString();
+        const storyDisplay = r.storyId ? `${r.storyId}` : '-';
+        table.push([r.id, r.name, storyDisplay, r.status, lastAccessed, r.path]);
+      }
+
+      console.log(table.toString());
+    } catch (err: any) {
+      console.error(chalk.red(`✗ ${err.message}`));
+      process.exit(1);
+    }
+  });
+
+// forge workspace status <id>
+workspace
+  .command('status <id>')
+  .description('Show detailed status of a workspace')
+  .action(async (id: string) => {
+    const forge = new ForgeCore(program.opts().config);
+    try {
+      const record = await forge.workspaceStatus(id);
+      if (!record) {
+        console.error(chalk.red(`✗ Workspace '${id}' not found`));
+        process.exit(1);
+      }
+
+      console.log(chalk.bold(`\nWorkspace: ${record.name}`));
+      console.log(`  ID:          ${record.id}`);
+      console.log(`  Config:      ${record.configRef}`);
+      console.log(`  Status:      ${record.status}`);
+      console.log(`  Path:        ${record.path}`);
+      console.log(`  Created:     ${new Date(record.createdAt).toLocaleString()}`);
+      console.log(`  Last Access: ${new Date(record.lastAccessedAt).toLocaleString()}`);
+      if (record.completedAt) {
+        console.log(`  Completed:   ${new Date(record.completedAt).toLocaleString()}`);
+      }
+      if (record.storyId) {
+        console.log(`  Story:       ${record.storyId}`);
+        if (record.storyTitle) {
+          console.log(`  Story Title: ${record.storyTitle}`);
+        }
+      }
+      console.log(`  Repos:       ${record.repos.length}`);
+      for (const repo of record.repos) {
+        console.log(`    - ${repo.name} (${repo.branch})`);
+        if (repo.worktreePath) {
+          console.log(`      Worktree: ${repo.worktreePath}`);
+        }
+      }
+      console.log();
+    } catch (err: any) {
+      console.error(chalk.red(`✗ ${err.message}`));
+      process.exit(1);
+    }
+  });
+
+// forge workspace delete <id>
+workspace
+  .command('delete <id>')
+  .description('Delete a workspace')
+  .option('--force', 'Skip confirmation and ignore uncommitted changes')
+  .action(async (id: string, options: { force?: boolean }) => {
+    const forge = new ForgeCore(program.opts().config);
+    try {
+      // Ask for confirmation unless --force
+      if (!options.force) {
+        const confirmed = await askConfirmation(`Delete workspace '${id}'? This cannot be undone.`);
+        if (!confirmed) {
+          console.log(chalk.gray('Cancelled'));
+          return;
+        }
+      }
+
+      await forge.workspaceDelete(id, { force: options.force });
+      console.log(chalk.green('Workspace deleted.'));
+    } catch (err: any) {
+      console.error(chalk.red(`✗ ${err.message}`));
+      process.exit(1);
+    }
+  });
+
+// forge workspace pause <id>
+workspace
+  .command('pause <id>')
+  .description('Pause a workspace')
+  .action(async (id: string) => {
+    const forge = new ForgeCore(program.opts().config);
+    try {
+      const record = await forge.workspacePause(id);
+      console.log(chalk.green(`✓ Paused workspace '${record.name}'`));
+    } catch (err: any) {
+      console.error(chalk.red(`✗ ${err.message}`));
+      process.exit(1);
+    }
+  });
+
+// forge workspace complete <id>
+workspace
+  .command('complete <id>')
+  .description('Mark a workspace as complete')
+  .action(async (id: string) => {
+    const forge = new ForgeCore(program.opts().config);
+    try {
+      const record = await forge.workspaceComplete(id);
+      console.log(chalk.green(`✓ Marked workspace '${record.name}' as complete`));
+    } catch (err: any) {
+      console.error(chalk.red(`✗ ${err.message}`));
+      process.exit(1);
+    }
+  });
+
+// forge workspace clean
+workspace
+  .command('clean')
+  .description('Clean up workspaces based on retention policy')
+  .option('--dry-run', 'Show what would be cleaned without actually deleting')
+  .option('--force', 'Skip confirmation')
+  .action(async (options: { dryRun?: boolean; force?: boolean }) => {
+    const forge = new ForgeCore(program.opts().config);
+    try {
+      const result = await forge.workspaceClean({ dryRun: options.dryRun });
+
+      if (result.cleaned.length === 0) {
+        console.log(chalk.yellow('No workspaces to clean'));
+        return;
+      }
+
+      if (options.dryRun) {
+        console.log(chalk.yellow(`Dry run: Would clean ${result.cleaned.length} workspace(s)`));
+        for (const id of result.cleaned) {
+          console.log(`  - ${id}`);
+        }
+      } else {
+        if (!options.force) {
+          const confirmed = await askConfirmation(
+            `Clean ${result.cleaned.length} workspace(s) based on retention policy?`,
+          );
+          if (!confirmed) {
+            console.log(chalk.gray('Cancelled'));
+            return;
+          }
+        }
+
+        console.log(chalk.green(`✓ Cleaned ${result.cleaned.length} workspace(s)`));
+        if (result.skipped.length > 0) {
+          console.log(chalk.yellow(`⚠ ${result.skipped.length} workspace(s) could not be cleaned`));
+        }
+      }
+    } catch (err: any) {
+      console.error(chalk.red(`✗ ${err.message}`));
+      process.exit(1);
+    }
+  });
+
 // forge serve — starts MCP server
 program
   .command('serve')
@@ -304,5 +499,20 @@ configCmd
       process.exit(1);
     }
   });
+
+// Helper function to ask for confirmation
+async function askConfirmation(question: string): Promise<boolean> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) => {
+    rl.question(chalk.yellow(`${question} (y/n) `), (answer) => {
+      rl.close();
+      resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
+    });
+  });
+}
 
 program.parse();
