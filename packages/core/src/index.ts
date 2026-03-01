@@ -19,3 +19,7 @@ export * from './compiler/index.js';
 
 // Global Config
 export * from './config/index.js';
+
+// Repo Scanner & Index
+export { scan } from './repo/repo-scanner.js';
+export { saveRepoIndex, loadRepoIndex } from './repo/repo-index-store.js';
