@@ -1,11 +1,12 @@
 import type { SkillMeta } from './skill-meta.js';
 import type { AgentMeta } from './agent-meta.js';
 import type { PluginMeta } from './plugin-meta.js';
+import type { WorkspaceConfigMeta } from './workspace-config-meta.js';
 
 /**
  * The type of a Forge artifact.
  */
-export type ArtifactType = 'skill' | 'agent' | 'plugin';
+export type ArtifactType = 'skill' | 'agent' | 'plugin' | 'workspace-config';
 
 /**
  * A reference to an artifact: type:id@version
@@ -21,7 +22,7 @@ export interface ArtifactRef {
 /**
  * The metadata of any artifact (union).
  */
-export type ArtifactMeta = SkillMeta | AgentMeta | PluginMeta;
+export type ArtifactMeta = SkillMeta | AgentMeta | PluginMeta | WorkspaceConfigMeta;
 
 /**
  * A full artifact with metadata + raw content.

@@ -166,6 +166,11 @@ export class ForgeCore {
       };
 
       for (const artifact of resolved) {
+        // Skip workspace-config artifacts — only skill|agent|plugin go in the lock file
+        if (artifact.ref.type === 'workspace-config') {
+          continue;
+        }
+
         const files = fileOps
           .filter(op => op.sourceRef.id === artifact.ref.id && op.sourceRef.type === artifact.ref.type)
           .map(op => op.path);
@@ -175,7 +180,7 @@ export class ForgeCore {
 
         newLock.artifacts[lockKey] = {
           id: artifact.ref.id,
-          type: artifact.ref.type,
+          type: artifact.ref.type as 'skill' | 'agent' | 'plugin',
           version: artifact.bundle.meta.version,
           registry: 'local',
           sha256: sha,
@@ -224,18 +229,22 @@ export class ForgeCore {
   /**
    * List installed (from lock) or available (from registry) artifacts.
    */
-  async list(scope: 'installed' | 'available' = 'available'): Promise<ArtifactSummary[]> {
+  async list(scope: 'installed' | 'available' = 'available', type?: ArtifactType): Promise<ArtifactSummary[]> {
     if (scope === 'installed') {
       const lock = await this.workspaceManager.readLock();
-      return Object.values(lock.artifacts).map(a => ({
+      let artifacts = Object.values(lock.artifacts).map(a => ({
         ref: { type: a.type, id: a.id, version: a.version },
         name: a.id,
         description: '',
         tags: [],
       }));
+      if (type) {
+        artifacts = artifacts.filter(a => a.ref.type === type);
+      }
+      return artifacts;
     }
     const registry = await this.buildRegistry();
-    return registry.list();
+    return registry.list(type);
   }
 
   /**

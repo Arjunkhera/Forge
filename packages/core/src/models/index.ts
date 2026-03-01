@@ -12,6 +12,15 @@ export { AgentMetaSchema, type AgentMeta } from './agent-meta.js';
 // Plugin Meta
 export { PluginMetaSchema, type PluginMeta } from './plugin-meta.js';
 
+// Workspace Config Meta
+export {
+  WorkspaceConfigMetaSchema,
+  type WorkspaceConfigMeta,
+  type GitWorkflowConfig,
+  type McpServerConfig,
+  type WorkspaceSettingsConfig,
+} from './workspace-config-meta.js';
+
 // Forge Config
 export {
   ForgeConfigSchema,
@@ -24,7 +33,15 @@ export {
 // Global Config
 export {
   GlobalConfigSchema,
+  WorkspaceSettingsSchema,
+  McpEndpointSchema,
+  McpEndpointsSchema,
+  ReposConfigSchema,
   type GlobalConfig,
+  type WorkspaceSettings,
+  type McpEndpoint,
+  type McpEndpoints,
+  type ReposConfig,
 } from './global-config.js';
 
 // Lock File

@@ -84,7 +84,7 @@ program
 program
   .command('search <query>')
   .description('Search the registry for artifacts')
-  .option('-t, --type <type>', 'Filter by type (skill|agent|plugin)')
+  .option('-t, --type <type>', 'Filter by type (skill|agent|plugin|workspace-config)')
   .action(async (query: string, options: { type?: string }) => {
     const forge = new ForgeCore(program.opts().config);
     try {
@@ -95,7 +95,7 @@ program
       }
       const table = new Table({
         head: [chalk.bold('Type'), chalk.bold('ID'), chalk.bold('Version'), chalk.bold('Description')],
-        colWidths: [10, 20, 10, 50],
+        colWidths: [20, 20, 10, 50],
       });
       for (const r of results) {
         table.push([r.ref.type, r.ref.id, r.ref.version, r.meta.description.slice(0, 47) + (r.meta.description.length > 47 ? '...' : '')]);
@@ -113,18 +113,19 @@ program
   .description('List artifacts')
   .option('--installed', 'Show only installed artifacts')
   .option('--available', 'Show available artifacts in registry')
-  .action(async (options: { installed?: boolean; available?: boolean }) => {
+  .option('-t, --type <type>', 'Filter by type (skill|agent|plugin|workspace-config)')
+  .action(async (options: { installed?: boolean; available?: boolean; type?: string }) => {
     const forge = new ForgeCore(program.opts().config);
     const scope = options.installed ? 'installed' : 'available';
     try {
-      const summaries = await forge.list(scope);
+      const summaries = await forge.list(scope, options.type as any);
       if (summaries.length === 0) {
         console.log(chalk.yellow(`No ${scope} artifacts found`));
         return;
       }
       const table = new Table({
         head: [chalk.bold('Type'), chalk.bold('ID'), chalk.bold('Version'), chalk.bold('Name')],
-        colWidths: [10, 25, 10, 35],
+        colWidths: [20, 25, 10, 35],
       });
       for (const s of summaries) {
         table.push([s.ref.type, s.ref.id, s.ref.version, s.name]);
@@ -153,6 +154,27 @@ program
       if (meta.tags.length > 0) {
         console.log(`  Tags:        ${meta.tags.join(', ')}`);
       }
+
+      // Show workspace-config specific fields
+      if (meta.type === 'workspace-config') {
+        if (Object.keys(meta.mcp_servers).length > 0) {
+          const serverList = Object.entries(meta.mcp_servers)
+            .map(([name, config]) => `${name}${config.required ? ' (required)' : ' (optional)'}`)
+            .join(', ');
+          console.log(`  MCP Servers: ${serverList}`);
+        }
+        if (meta.plugins.length > 0) {
+          console.log(`  Plugins:     ${meta.plugins.join(', ')}`);
+        }
+        if (meta.skills.length > 0) {
+          console.log(`  Skills:      ${meta.skills.join(', ')}`);
+        }
+        if (Object.keys(meta.git_workflow).length > 0) {
+          const gwc = meta.git_workflow;
+          console.log(`  Git Workflow: branch=${gwc.branch_pattern}, base=${gwc.base_branch}, format=${gwc.commit_format}`);
+        }
+      }
+
       if (resolved.dependencies.length > 0) {
         console.log(`  Deps:        ${resolved.dependencies.map(d => d.ref.id).join(', ')}`);
       }

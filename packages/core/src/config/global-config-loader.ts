@@ -4,6 +4,7 @@ import os from 'os';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { GlobalConfigSchema, type GlobalConfig } from '../models/global-config.js';
 import type { RegistryConfig } from '../models/forge-config.js';
+import { expandPath } from './path-utils.js';
 
 /**
  * Default location for the global Forge configuration.
@@ -14,6 +15,7 @@ export const GLOBAL_CONFIG_PATH = path.join(GLOBAL_CONFIG_DIR, 'config.yaml');
 /**
  * Load the global Forge configuration from ~/.forge/config.yaml.
  * Returns an empty config (no registries) if the file doesn't exist.
+ * Expands all tilde paths to absolute paths.
  *
  * @param configPath - Override the default path (useful for testing).
  */
@@ -23,34 +25,55 @@ export async function loadGlobalConfig(
   try {
     const raw = await fs.readFile(configPath, 'utf-8');
     const parsed = parseYaml(raw);
-    return GlobalConfigSchema.parse(parsed);
+    const config = GlobalConfigSchema.parse(parsed);
+    
+    // Expand all tilde paths to absolute paths
+    if (config.workspace.mount_path) {
+      config.workspace.mount_path = expandPath(config.workspace.mount_path);
+    }
+    if (config.repos.index_path) {
+      config.repos.index_path = expandPath(config.repos.index_path);
+    }
+    config.repos.scan_paths = config.repos.scan_paths.map(expandPath);
+    
+    // Expand registry paths for filesystem registries
+    for (const registry of config.registries) {
+      if (registry.type === 'filesystem') {
+        (registry as any).path = expandPath((registry as any).path);
+      }
+    }
+    
+    return config;
   } catch (err: any) {
     if (err?.code === 'ENOENT') {
       // No global config — return empty defaults
-      return { registries: [] };
+      return GlobalConfigSchema.parse({});
     }
     // File exists but is malformed — warn and return empty
     console.warn(
       `[Forge] Warning: Could not parse global config at ${configPath}: ${err.message}. Using defaults.`,
     );
-    return { registries: [] };
+    return GlobalConfigSchema.parse({});
   }
 }
 
 /**
  * Save a global config to ~/.forge/config.yaml.
  * Creates the ~/.forge directory if it doesn't exist.
+ * Does NOT expand paths — stores them as-is (tilde format is fine).
  *
- * @param config - The global config to write.
+ * @param config - The global config to write (can be partial, will be validated).
  * @param configPath - Override the default path (useful for testing).
  */
 export async function saveGlobalConfig(
-  config: GlobalConfig,
+  config: Partial<GlobalConfig>,
   configPath: string = GLOBAL_CONFIG_PATH,
 ): Promise<void> {
   const dir = path.dirname(configPath);
   await fs.mkdir(dir, { recursive: true });
-  const yaml = stringifyYaml(config);
+  // Parse to ensure it's valid and fill in defaults
+  const validated = GlobalConfigSchema.parse(config);
+  const yaml = stringifyYaml(validated);
   await fs.writeFile(configPath, yaml, 'utf-8');
 }
 

@@ -3,6 +3,7 @@ import {
   SkillMetaSchema,
   AgentMetaSchema,
   PluginMetaSchema,
+  WorkspaceConfigMetaSchema,
   ForgeConfigSchema,
   LockFileSchema,
   SemVerSchema,

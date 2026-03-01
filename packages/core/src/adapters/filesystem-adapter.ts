@@ -7,6 +7,7 @@ import {
   SkillMetaSchema,
   AgentMetaSchema,
   PluginMetaSchema,
+  WorkspaceConfigMetaSchema,
 } from '../models/index.js';
 import { ArtifactNotFoundError, InvalidMetadataError } from './errors.js';
 
@@ -15,6 +16,7 @@ const TYPE_DIRS: Record<ArtifactType, string> = {
   skill: 'skills',
   agent: 'agents',
   plugin: 'plugins',
+  'workspace-config': 'workspace-configs',
 };
 
 // Content file names for each type
@@ -22,6 +24,7 @@ const CONTENT_FILES: Record<ArtifactType, string> = {
   skill: 'SKILL.md',
   agent: 'AGENT.md',
   plugin: 'PLUGIN.md',
+  'workspace-config': 'WORKSPACE.md',
 };
 
 // Zod schemas for each type
@@ -29,6 +32,7 @@ const SCHEMAS = {
   skill: SkillMetaSchema,
   agent: AgentMetaSchema,
   plugin: PluginMetaSchema,
+  'workspace-config': WorkspaceConfigMetaSchema,
 };
 
 /**
@@ -38,6 +42,7 @@ const SCHEMAS = {
  *   {root}/skills/{id}/metadata.yaml + SKILL.md
  *   {root}/agents/{id}/metadata.yaml + AGENT.md
  *   {root}/plugins/{id}/metadata.yaml
+ *   {root}/workspace-configs/{id}/metadata.yaml + WORKSPACE.md (optional)
  *
  * @example
  * const adapter = new FilesystemAdapter('./registry');
@@ -125,13 +130,13 @@ export class FilesystemAdapter implements DataAdapter {
       );
     }
 
-    // Read content (SKILL.md / AGENT.md) — opaque, never parsed
+    // Read content (SKILL.md / AGENT.md / WORKSPACE.md) — opaque, never parsed
     let content = '';
     try {
       content = await fs.readFile(contentPath, 'utf-8');
     } catch (err: any) {
       if (err.code !== 'ENOENT') throw err;
-      // Content file optional for plugins
+      // Content file optional for plugins and workspace-configs
     }
 
     return {
