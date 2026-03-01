@@ -4,3 +4,4 @@ export {
   generateWorkspaceId,
   WORKSPACES_FILE,
 } from './workspace-metadata-store.js';
+export { WorkspaceLifecycleManager } from './workspace-lifecycle.js';
