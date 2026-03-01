@@ -5,16 +5,23 @@ const index_js_1 = require("@modelcontextprotocol/sdk/server/index.js");
 const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
 const types_js_1 = require("@modelcontextprotocol/sdk/types.js");
 const core_1 = require("@forge/core");
+const core_2 = require("@forge/core");
 /**
  * Start the Forge MCP server.
  * Exposes ForgeCore operations as MCP tools for LLM consumption.
  *
  * Tools:
- *   forge_search  - Search registry for artifacts
- *   forge_add     - Add artifact to forge.yaml
- *   forge_install - Run full install pipeline
- *   forge_resolve - Resolve a single artifact ref
- *   forge_list    - List installed or available artifacts
+ *   forge_search        - Search registry for artifacts
+ *   forge_add           - Add artifact to forge.yaml
+ *   forge_install       - Run full install pipeline
+ *   forge_resolve       - Resolve a single artifact ref
+ *   forge_list          - List installed or available artifacts
+ *   forge_repo_list     - List repositories from index
+ *   forge_repo_resolve  - Resolve a repository by name or URL
+ *   forge_workspace_create - Create a new workspace from config
+ *   forge_workspace_list - List tracked workspaces
+ *   forge_workspace_delete - Delete a workspace by ID
+ *   forge_workspace_status - Get full details for a workspace
  */
 async function startMcpServer(workspaceRoot = process.cwd()) {
     const forge = new core_1.ForgeCore(workspaceRoot);
@@ -97,6 +104,89 @@ async function startMcpServer(workspaceRoot = process.cwd()) {
                             description: 'Which artifacts to list',
                         },
                     },
+                },
+            },
+            {
+                name: 'forge_repo_list',
+                description: 'List repositories from the local index. Filter by query (name, path, or URL) and/or language. Automatically scans if no index exists.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        query: {
+                            type: 'string',
+                            description: 'Search query to filter repositories (optional)',
+                        },
+                        language: {
+                            type: 'string',
+                            description: 'Filter by programming language (optional)',
+                        },
+                    },
+                },
+            },
+            {
+                name: 'forge_repo_resolve',
+                description: 'Find a specific repository by name or remote URL. Automatically scans if no index exists.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: {
+                            type: 'string',
+                            description: 'Repository name to search for (optional)',
+                        },
+                        remoteUrl: {
+                            type: 'string',
+                            description: 'Remote URL (https or git@) to match against (optional)',
+                        },
+                    },
+                },
+            },
+            {
+                name: 'forge_workspace_create',
+                description: 'Create a new workspace from a workspace config. Installs plugins, creates git worktrees, and emits MCP configs and environment variables.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        config: { type: 'string', description: 'Workspace config artifact name (e.g., "sdlc-default")' },
+                        configVersion: { type: 'string', description: 'Version constraint (default: latest)' },
+                        storyId: { type: 'string', description: 'Anvil work item ID to link to this workspace' },
+                        storyTitle: { type: 'string', description: 'Cached story title for display' },
+                        repos: { type: 'array', items: { type: 'string' }, description: 'Specific repo names to include' },
+                    },
+                    required: ['config'],
+                },
+            },
+            {
+                name: 'forge_workspace_list',
+                description: 'List tracked workspaces with optional status or story filter.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        status: { type: 'string', enum: ['active', 'paused', 'completed', 'archived'], description: 'Filter by workspace status' },
+                        storyId: { type: 'string', description: 'Filter by linked story ID' },
+                    },
+                },
+            },
+            {
+                name: 'forge_workspace_delete',
+                description: 'Delete a workspace by ID. Removes git worktrees and workspace folder from disk.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'string', description: 'Workspace ID (e.g., "ws-abc12345")' },
+                        force: { type: 'boolean', description: 'Force delete even if uncommitted changes exist' },
+                    },
+                    required: ['id'],
+                },
+            },
+            {
+                name: 'forge_workspace_status',
+                description: 'Get full details for a single workspace by ID.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'string', description: 'Workspace ID' },
+                    },
+                    required: ['id'],
                 },
             },
         ],
@@ -192,6 +282,154 @@ async function startMcpServer(workspaceRoot = process.cwd()) {
                             }],
                     };
                 }
+                case 'forge_repo_list': {
+                    const { query, language } = (args ?? {});
+                    let repos = await forge.repoList(query);
+                    if (language) {
+                        repos = repos.filter((r) => r.language?.toLowerCase() === language.toLowerCase());
+                    }
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify(repos.map(r => ({
+                                    name: r.name,
+                                    localPath: r.localPath,
+                                    remoteUrl: r.remoteUrl,
+                                    defaultBranch: r.defaultBranch,
+                                    language: r.language,
+                                    framework: r.framework,
+                                    lastCommitDate: r.lastCommitDate,
+                                    lastScannedAt: r.lastScannedAt,
+                                })), null, 2),
+                            }],
+                    };
+                }
+                case 'forge_repo_resolve': {
+                    const { name, remoteUrl } = (args ?? {});
+                    if (!name && !remoteUrl) {
+                        return {
+                            content: [{
+                                    type: 'text',
+                                    text: JSON.stringify({
+                                        error: true,
+                                        message: 'Either name or remoteUrl must be provided',
+                                    }),
+                                }],
+                            isError: true,
+                        };
+                    }
+                    const entry = await forge.repoResolve({ name, remoteUrl });
+                    if (!entry) {
+                        return {
+                            content: [{
+                                    type: 'text',
+                                    text: JSON.stringify({
+                                        error: true,
+                                        code: 'REPO_NOT_FOUND',
+                                        message: 'Repository not found',
+                                        suggestion: 'Run: forge repo scan',
+                                    }),
+                                }],
+                            isError: true,
+                        };
+                    }
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify({
+                                    name: entry.name,
+                                    localPath: entry.localPath,
+                                    remoteUrl: entry.remoteUrl,
+                                    defaultBranch: entry.defaultBranch,
+                                    language: entry.language,
+                                    framework: entry.framework,
+                                    lastCommitDate: entry.lastCommitDate,
+                                    lastScannedAt: entry.lastScannedAt,
+                                }, null, 2),
+                            }],
+                    };
+                }
+                case 'forge_workspace_create': {
+                    const { config, configVersion, storyId, storyTitle, repos } = args;
+                    const workspace = await forge.workspaceCreate({
+                        configName: config,
+                        configVersion,
+                        storyId,
+                        storyTitle,
+                        repos,
+                    });
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify({
+                                    success: true,
+                                    workspace: {
+                                        id: workspace.id,
+                                        name: workspace.name,
+                                        status: workspace.status,
+                                        createdAt: workspace.createdAt,
+                                        storyId: workspace.storyId,
+                                    },
+                                }, null, 2),
+                            }],
+                    };
+                }
+                case 'forge_workspace_list': {
+                    const { status, storyId } = args;
+                    const store = new core_2.WorkspaceMetadataStore();
+                    if (storyId) {
+                        const record = await store.findByStoryId(storyId);
+                        const results = record ? [record] : [];
+                        return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+                    }
+                    const records = await store.list(status ? { status: status } : undefined);
+                    return { content: [{ type: 'text', text: JSON.stringify(records, null, 2) }] };
+                }
+                case 'forge_workspace_delete': {
+                    const { id, force } = args;
+                    const store = new core_2.WorkspaceMetadataStore();
+                    const record = await store.get(id);
+                    if (!record) {
+                        return {
+                            content: [{
+                                    type: 'text',
+                                    text: JSON.stringify({
+                                        error: true,
+                                        code: 'WORKSPACE_NOT_FOUND',
+                                        message: `Workspace '${id}' not found`,
+                                    }, null, 2),
+                                }],
+                        };
+                    }
+                    await store.delete(id);
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify({
+                                    success: true,
+                                    message: `Workspace '${id}' deleted`,
+                                }, null, 2),
+                            }],
+                    };
+                }
+                case 'forge_workspace_status': {
+                    const { id } = args;
+                    const store = new core_2.WorkspaceMetadataStore();
+                    const record = await store.get(id);
+                    if (!record) {
+                        return {
+                            content: [{
+                                    type: 'text',
+                                    text: JSON.stringify({
+                                        error: true,
+                                        code: 'WORKSPACE_NOT_FOUND',
+                                        message: `Workspace '${id}' not found`,
+                                    }, null, 2),
+                                }],
+                        };
+                    }
+                    return { content: [{ type: 'text', text: JSON.stringify(record, null, 2) }] };
+                }
                 default:
                     return {
                         content: [{ type: 'text', text: `Unknown tool: ${name}` }],
@@ -218,7 +456,7 @@ async function startMcpServer(workspaceRoot = process.cwd()) {
     console.error('[Forge MCP] Server started on stdio');
 }
 // Auto-start if run directly (using dynamic check to avoid import.meta issues with CommonJS)
-const isDirectRun = process.argv[1]?.endsWith('/index.js') || process.argv[1]?.endsWith('\\index.js');
+const isDirectRun = process.argv[1]?.endsWith('/index.ts') || process.argv[1]?.endsWith('\\index.ts');
 if (isDirectRun && typeof require !== 'undefined') {
     startMcpServer(process.cwd()).catch(err => {
         console.error(err);

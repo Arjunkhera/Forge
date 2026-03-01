@@ -14,7 +14,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Registry = exports.ForgeCore = void 0;
+exports.normalizeGitUrl = exports.RepoIndexQuery = exports.loadRepoIndex = exports.saveRepoIndex = exports.scan = exports.Registry = exports.ForgeCore = void 0;
 // Core
 var core_js_1 = require("./core.js");
 Object.defineProperty(exports, "ForgeCore", { enumerable: true, get: function () { return core_js_1.ForgeCore; } });
@@ -32,4 +32,14 @@ __exportStar(require("./workspace/index.js"), exports);
 __exportStar(require("./compiler/index.js"), exports);
 // Global Config
 __exportStar(require("./config/index.js"), exports);
+// Repo Scanner & Index
+var repo_scanner_js_1 = require("./repo/repo-scanner.js");
+Object.defineProperty(exports, "scan", { enumerable: true, get: function () { return repo_scanner_js_1.scan; } });
+var repo_index_store_js_1 = require("./repo/repo-index-store.js");
+Object.defineProperty(exports, "saveRepoIndex", { enumerable: true, get: function () { return repo_index_store_js_1.saveRepoIndex; } });
+Object.defineProperty(exports, "loadRepoIndex", { enumerable: true, get: function () { return repo_index_store_js_1.loadRepoIndex; } });
+var repo_index_query_js_1 = require("./repo/repo-index-query.js");
+Object.defineProperty(exports, "RepoIndexQuery", { enumerable: true, get: function () { return repo_index_query_js_1.RepoIndexQuery; } });
+var url_utils_js_1 = require("./repo/url-utils.js");
+Object.defineProperty(exports, "normalizeGitUrl", { enumerable: true, get: function () { return url_utils_js_1.normalizeGitUrl; } });
 //# sourceMappingURL=index.js.map

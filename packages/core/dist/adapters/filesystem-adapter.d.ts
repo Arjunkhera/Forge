@@ -7,6 +7,7 @@ import type { ArtifactType, ArtifactBundle, ArtifactMeta } from '../models/index
  *   {root}/skills/{id}/metadata.yaml + SKILL.md
  *   {root}/agents/{id}/metadata.yaml + AGENT.md
  *   {root}/plugins/{id}/metadata.yaml
+ *   {root}/workspace-configs/{id}/metadata.yaml + WORKSPACE.md (optional)
  *
  * @example
  * const adapter = new FilesystemAdapter('./registry');

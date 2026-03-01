@@ -6,6 +6,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.Registry = exports.ForgeCore = void 0;
 const path_1 = __importDefault(require("path"));
 const workspace_manager_js_1 = require("./workspace/workspace-manager.js");
+const workspace_creator_js_1 = require("./workspace/workspace-creator.js");
+const workspace_lifecycle_js_1 = require("./workspace/workspace-lifecycle.js");
+const workspace_metadata_store_js_1 = require("./workspace/workspace-metadata-store.js");
 const registry_js_1 = require("./registry/registry.js");
 const resolver_js_1 = require("./resolver/resolver.js");
 const compiler_js_1 = require("./compiler/compiler.js");
@@ -15,17 +18,24 @@ const composite_adapter_js_1 = require("./adapters/composite-adapter.js");
 const git_adapter_js_1 = require("./adapters/git-adapter.js");
 const errors_js_1 = require("./adapters/errors.js");
 const global_config_loader_js_1 = require("./config/global-config-loader.js");
+const repo_scanner_js_1 = require("./repo/repo-scanner.js");
+const repo_index_store_js_1 = require("./repo/repo-index-store.js");
+const repo_index_query_js_1 = require("./repo/repo-index-query.js");
 class ForgeCore {
     workspaceRoot;
     workspaceManager;
     compiler;
     globalConfigPath;
+    lifecycleManager;
+    metadataStore;
     constructor(workspaceRoot = process.cwd(), options) {
         this.workspaceRoot = workspaceRoot;
         this.workspaceManager = new workspace_manager_js_1.WorkspaceManager(workspaceRoot);
         this.compiler = new compiler_js_1.Compiler();
         this.compiler.register(new claude_code_strategy_js_1.ClaudeCodeStrategy());
         this.globalConfigPath = options?.globalConfigPath;
+        this.metadataStore = new workspace_metadata_store_js_1.WorkspaceMetadataStore();
+        this.lifecycleManager = new workspace_lifecycle_js_1.WorkspaceLifecycleManager(undefined, this.metadataStore);
     }
     /**
      * Initialize a new Forge workspace.
@@ -120,6 +130,10 @@ class ForgeCore {
                 artifacts: {},
             };
             for (const artifact of resolved) {
+                // Skip workspace-config artifacts — only skill|agent|plugin go in the lock file
+                if (artifact.ref.type === 'workspace-config') {
+                    continue;
+                }
                 const files = fileOps
                     .filter(op => op.sourceRef.id === artifact.ref.id && op.sourceRef.type === artifact.ref.type)
                     .map(op => op.path);
@@ -173,24 +187,137 @@ class ForgeCore {
     /**
      * List installed (from lock) or available (from registry) artifacts.
      */
-    async list(scope = 'available') {
+    async list(scope = 'available', type) {
         if (scope === 'installed') {
             const lock = await this.workspaceManager.readLock();
-            return Object.values(lock.artifacts).map(a => ({
+            let artifacts = Object.values(lock.artifacts).map(a => ({
                 ref: { type: a.type, id: a.id, version: a.version },
                 name: a.id,
                 description: '',
                 tags: [],
             }));
+            if (type) {
+                artifacts = artifacts.filter(a => a.ref.type === type);
+            }
+            return artifacts;
         }
         const registry = await this.buildRegistry();
-        return registry.list();
+        return registry.list(type);
     }
     /**
      * Read the current forge.yaml config.
      */
     async getConfig() {
         return this.workspaceManager.readConfig();
+    }
+    /**
+     * Scan configured directories for git repositories and update the index.
+     */
+    async repoScan() {
+        const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
+        const { scan_paths, index_path } = globalConfig.repos;
+        if (scan_paths.length === 0) {
+            throw new Error('No scan paths configured. Run: forge config set repos.scan_paths ~/Repositories');
+        }
+        const existing = await (0, repo_index_store_js_1.loadRepoIndex)(index_path);
+        const index = await (0, repo_scanner_js_1.scan)(scan_paths, existing ?? undefined);
+        await (0, repo_index_store_js_1.saveRepoIndex)(index, index_path);
+        return index;
+    }
+    /**
+     * List repositories from the index, optionally filtered by query.
+     */
+    async repoList(query) {
+        const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
+        const { index_path, scan_paths } = globalConfig.repos;
+        let index = await (0, repo_index_store_js_1.loadRepoIndex)(index_path);
+        // Auto-scan if no index exists and scan_paths configured
+        if (!index && scan_paths.length > 0) {
+            console.log('[Forge] No repo index found. Running initial scan...');
+            index = await this.repoScan();
+        }
+        if (!index)
+            return [];
+        const query_obj = new repo_index_query_js_1.RepoIndexQuery(index.repos);
+        return query ? query_obj.search(query) : query_obj.listAll();
+    }
+    /**
+     * Resolve a repository by name or remote URL.
+     */
+    async repoResolve(opts) {
+        if (!opts.name && !opts.remoteUrl) {
+            throw new Error('Either name or remoteUrl must be provided');
+        }
+        const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
+        const { index_path, scan_paths } = globalConfig.repos;
+        let index = await (0, repo_index_store_js_1.loadRepoIndex)(index_path);
+        // Auto-scan if no index exists
+        if (!index && scan_paths.length > 0) {
+            console.log('[Forge] No repo index found. Running initial scan...');
+            index = await this.repoScan();
+        }
+        if (!index)
+            return null;
+        const q = new repo_index_query_js_1.RepoIndexQuery(index.repos);
+        if (opts.name)
+            return q.findByName(opts.name);
+        if (opts.remoteUrl)
+            return q.findByRemoteUrl(opts.remoteUrl);
+        return null;
+    }
+    /**
+     * Create a new workspace from a workspace config artifact.
+     * Resolves the workspace config, sets up folders, installs plugins,
+     * creates git worktrees, and registers in metadata store.
+     */
+    async workspaceCreate(options) {
+        const creator = new workspace_creator_js_1.WorkspaceCreator(this);
+        return creator.create(options);
+    }
+    /**
+     * List workspaces, optionally filtered by status.
+     */
+    async workspaceList(filter) {
+        const filterObj = filter?.status ? { status: filter.status } : undefined;
+        return this.metadataStore.list(filterObj);
+    }
+    /**
+     * Get status of a workspace.
+     */
+    async workspaceStatus(id) {
+        return this.metadataStore.get(id);
+    }
+    /**
+     * Pause a workspace.
+     */
+    async workspacePause(id) {
+        return this.lifecycleManager.pause(id);
+    }
+    /**
+     * Complete a workspace.
+     */
+    async workspaceComplete(id) {
+        return this.lifecycleManager.complete(id);
+    }
+    /**
+     * Delete a workspace.
+     */
+    async workspaceDelete(id, opts) {
+        return this.lifecycleManager.delete(id, opts);
+    }
+    /**
+     * Archive a workspace.
+     */
+    async workspaceArchive(id) {
+        return this.lifecycleManager.archive(id);
+    }
+    /**
+     * Clean workspaces based on retention policy.
+     */
+    async workspaceClean(opts) {
+        const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
+        const retentionDays = globalConfig.workspace.retention_days;
+        return this.lifecycleManager.clean(retentionDays, opts);
     }
     // Internal helpers
     async buildRegistry() {
@@ -274,6 +401,10 @@ class ForgeCore {
         else if (remaining.startsWith('plugin:')) {
             type = 'plugin';
             remaining = remaining.slice(7);
+        }
+        else if (remaining.startsWith('workspace-config:')) {
+            type = 'workspace-config';
+            remaining = remaining.slice(17);
         }
         // Extract version suffix
         const atIdx = remaining.indexOf('@');

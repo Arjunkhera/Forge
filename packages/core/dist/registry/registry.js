@@ -25,7 +25,7 @@ class Registry {
      * @param type - Optional artifact type filter
      */
     async search(query, type) {
-        const types = type ? [type] : ['skill', 'agent', 'plugin'];
+        const types = type ? [type] : ['skill', 'agent', 'plugin', 'workspace-config'];
         const lowerQuery = query.toLowerCase();
         const results = [];
         for (const t of types) {
@@ -55,7 +55,7 @@ class Registry {
      * Returns lightweight summaries (no content).
      */
     async list(type) {
-        const types = type ? [type] : ['skill', 'agent', 'plugin'];
+        const types = type ? [type] : ['skill', 'agent', 'plugin', 'workspace-config'];
         const summaries = [];
         for (const t of types) {
             const artifacts = await this.adapter.list(t);

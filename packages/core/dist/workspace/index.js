@@ -1,6 +1,17 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.WorkspaceManager = void 0;
+exports.WorkspaceLifecycleManager = exports.generateBranchName = exports.slugify = exports.WorkspaceCreateError = exports.WorkspaceCreator = exports.WORKSPACES_FILE = exports.generateWorkspaceId = exports.WorkspaceMetadataStore = exports.WorkspaceManager = void 0;
 var workspace_manager_js_1 = require("./workspace-manager.js");
 Object.defineProperty(exports, "WorkspaceManager", { enumerable: true, get: function () { return workspace_manager_js_1.WorkspaceManager; } });
+var workspace_metadata_store_js_1 = require("./workspace-metadata-store.js");
+Object.defineProperty(exports, "WorkspaceMetadataStore", { enumerable: true, get: function () { return workspace_metadata_store_js_1.WorkspaceMetadataStore; } });
+Object.defineProperty(exports, "generateWorkspaceId", { enumerable: true, get: function () { return workspace_metadata_store_js_1.generateWorkspaceId; } });
+Object.defineProperty(exports, "WORKSPACES_FILE", { enumerable: true, get: function () { return workspace_metadata_store_js_1.WORKSPACES_FILE; } });
+var workspace_creator_js_1 = require("./workspace-creator.js");
+Object.defineProperty(exports, "WorkspaceCreator", { enumerable: true, get: function () { return workspace_creator_js_1.WorkspaceCreator; } });
+Object.defineProperty(exports, "WorkspaceCreateError", { enumerable: true, get: function () { return workspace_creator_js_1.WorkspaceCreateError; } });
+Object.defineProperty(exports, "slugify", { enumerable: true, get: function () { return workspace_creator_js_1.slugify; } });
+Object.defineProperty(exports, "generateBranchName", { enumerable: true, get: function () { return workspace_creator_js_1.generateBranchName; } });
+var workspace_lifecycle_js_1 = require("./workspace-lifecycle.js");
+Object.defineProperty(exports, "WorkspaceLifecycleManager", { enumerable: true, get: function () { return workspace_lifecycle_js_1.WorkspaceLifecycleManager; } });
 //# sourceMappingURL=index.js.map

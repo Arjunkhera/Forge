@@ -1,5 +1,7 @@
-import type { ArtifactSummary, ArtifactType, InstallReport, SearchResult, ResolvedArtifact } from './models/index.js';
+import { type WorkspaceCreateOptions } from './workspace/workspace-creator.js';
+import type { ArtifactSummary, ArtifactType, InstallReport, SearchResult, ResolvedArtifact, WorkspaceRecord } from './models/index.js';
 import type { ForgeConfig } from './models/forge-config.js';
+import type { RepoIndex, RepoIndexEntry } from './models/repo-index.js';
 export interface InstallOptions {
     target?: ForgeConfig['target'];
     conflictStrategy?: 'overwrite' | 'skip' | 'backup';
@@ -24,6 +26,8 @@ export declare class ForgeCore {
     private readonly workspaceManager;
     private readonly compiler;
     private readonly globalConfigPath;
+    private readonly lifecycleManager;
+    private readonly metadataStore;
     constructor(workspaceRoot?: string, options?: ForgeCoreOptions);
     /**
      * Initialize a new Forge workspace.
@@ -55,11 +59,69 @@ export declare class ForgeCore {
     /**
      * List installed (from lock) or available (from registry) artifacts.
      */
-    list(scope?: 'installed' | 'available'): Promise<ArtifactSummary[]>;
+    list(scope?: 'installed' | 'available', type?: ArtifactType): Promise<ArtifactSummary[]>;
     /**
      * Read the current forge.yaml config.
      */
     getConfig(): Promise<ForgeConfig>;
+    /**
+     * Scan configured directories for git repositories and update the index.
+     */
+    repoScan(): Promise<RepoIndex>;
+    /**
+     * List repositories from the index, optionally filtered by query.
+     */
+    repoList(query?: string): Promise<RepoIndexEntry[]>;
+    /**
+     * Resolve a repository by name or remote URL.
+     */
+    repoResolve(opts: {
+        name?: string;
+        remoteUrl?: string;
+    }): Promise<RepoIndexEntry | null>;
+    /**
+     * Create a new workspace from a workspace config artifact.
+     * Resolves the workspace config, sets up folders, installs plugins,
+     * creates git worktrees, and registers in metadata store.
+     */
+    workspaceCreate(options: WorkspaceCreateOptions): Promise<WorkspaceRecord>;
+    /**
+     * List workspaces, optionally filtered by status.
+     */
+    workspaceList(filter?: {
+        status?: string;
+    }): Promise<WorkspaceRecord[]>;
+    /**
+     * Get status of a workspace.
+     */
+    workspaceStatus(id: string): Promise<WorkspaceRecord | null>;
+    /**
+     * Pause a workspace.
+     */
+    workspacePause(id: string): Promise<WorkspaceRecord>;
+    /**
+     * Complete a workspace.
+     */
+    workspaceComplete(id: string): Promise<WorkspaceRecord>;
+    /**
+     * Delete a workspace.
+     */
+    workspaceDelete(id: string, opts?: {
+        force?: boolean;
+    }): Promise<void>;
+    /**
+     * Archive a workspace.
+     */
+    workspaceArchive(id: string): Promise<WorkspaceRecord>;
+    /**
+     * Clean workspaces based on retention policy.
+     */
+    workspaceClean(opts?: {
+        dryRun?: boolean;
+    }): Promise<{
+        cleaned: string[];
+        skipped: string[];
+    }>;
     private buildRegistry;
     /**
      * Instantiate the correct DataAdapter for a registry config entry.

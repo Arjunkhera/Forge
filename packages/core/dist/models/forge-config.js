@@ -48,6 +48,7 @@ exports.ForgeConfigSchema = zod_1.z.object({
         skills: zod_1.z.record(zod_1.z.string(), zod_1.z.string()).default({}),
         agents: zod_1.z.record(zod_1.z.string(), zod_1.z.string()).default({}),
         plugins: zod_1.z.record(zod_1.z.string(), zod_1.z.string()).default({}),
+        'workspace-configs': zod_1.z.record(zod_1.z.string(), zod_1.z.string()).default({}),
     }).default({}),
     outputDir: zod_1.z.string().default('.'),
 });

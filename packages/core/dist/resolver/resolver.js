@@ -134,6 +134,21 @@ class Resolver {
                 }
             }
         }
+        // For workspace-configs: resolve referenced plugins and skills
+        if (meta.type === 'workspace-config' && 'plugins' in meta && Array.isArray(meta.plugins)) {
+            for (const pluginId of meta.plugins) {
+                if (!deps.find(d => d.id === pluginId)) {
+                    deps.push({ type: 'plugin', id: pluginId, version: '*' });
+                }
+            }
+        }
+        if (meta.type === 'workspace-config' && 'skills' in meta && Array.isArray(meta.skills)) {
+            for (const skillId of meta.skills) {
+                if (!deps.find(d => d.id === skillId)) {
+                    deps.push({ type: 'skill', id: skillId, version: '*' });
+                }
+            }
+        }
         return deps;
     }
 }

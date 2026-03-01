@@ -114,14 +114,17 @@ export declare const ForgeConfigSchema: z.ZodObject<{
         skills: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodString>>;
         agents: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodString>>;
         plugins: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodString>>;
+        'workspace-configs': z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodString>>;
     }, "strip", z.ZodTypeAny, {
         skills: Record<string, string>;
         agents: Record<string, string>;
         plugins: Record<string, string>;
+        'workspace-configs': Record<string, string>;
     }, {
         skills?: Record<string, string> | undefined;
         agents?: Record<string, string> | undefined;
         plugins?: Record<string, string> | undefined;
+        'workspace-configs'?: Record<string, string> | undefined;
     }>>;
     outputDir: z.ZodDefault<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
@@ -148,6 +151,7 @@ export declare const ForgeConfigSchema: z.ZodObject<{
         skills: Record<string, string>;
         agents: Record<string, string>;
         plugins: Record<string, string>;
+        'workspace-configs': Record<string, string>;
     };
     outputDir: string;
 }, {
@@ -174,6 +178,7 @@ export declare const ForgeConfigSchema: z.ZodObject<{
         skills?: Record<string, string> | undefined;
         agents?: Record<string, string> | undefined;
         plugins?: Record<string, string> | undefined;
+        'workspace-configs'?: Record<string, string> | undefined;
     } | undefined;
     outputDir?: string | undefined;
 }>;

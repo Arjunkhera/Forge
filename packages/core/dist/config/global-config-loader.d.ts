@@ -8,6 +8,7 @@ export declare const GLOBAL_CONFIG_PATH: string;
 /**
  * Load the global Forge configuration from ~/.forge/config.yaml.
  * Returns an empty config (no registries) if the file doesn't exist.
+ * Expands all tilde paths to absolute paths.
  *
  * @param configPath - Override the default path (useful for testing).
  */
@@ -15,11 +16,12 @@ export declare function loadGlobalConfig(configPath?: string): Promise<GlobalCon
 /**
  * Save a global config to ~/.forge/config.yaml.
  * Creates the ~/.forge directory if it doesn't exist.
+ * Does NOT expand paths — stores them as-is (tilde format is fine).
  *
- * @param config - The global config to write.
+ * @param config - The global config to write (can be partial, will be validated).
  * @param configPath - Override the default path (useful for testing).
  */
-export declare function saveGlobalConfig(config: GlobalConfig, configPath?: string): Promise<void>;
+export declare function saveGlobalConfig(config: Partial<GlobalConfig>, configPath?: string): Promise<void>;
 /**
  * Add a registry to the global config. Deduplicates by name.
  *

@@ -14,18 +14,21 @@ const TYPE_DIRS = {
     skill: 'skills',
     agent: 'agents',
     plugin: 'plugins',
+    'workspace-config': 'workspace-configs',
 };
 // Content file names for each type
 const CONTENT_FILES = {
     skill: 'SKILL.md',
     agent: 'AGENT.md',
     plugin: 'PLUGIN.md',
+    'workspace-config': 'WORKSPACE.md',
 };
 // Zod schemas for each type
 const SCHEMAS = {
     skill: index_js_1.SkillMetaSchema,
     agent: index_js_1.AgentMetaSchema,
     plugin: index_js_1.PluginMetaSchema,
+    'workspace-config': index_js_1.WorkspaceConfigMetaSchema,
 };
 /**
  * Filesystem-based DataAdapter. Reads artifacts from a local directory tree.
@@ -34,6 +37,7 @@ const SCHEMAS = {
  *   {root}/skills/{id}/metadata.yaml + SKILL.md
  *   {root}/agents/{id}/metadata.yaml + AGENT.md
  *   {root}/plugins/{id}/metadata.yaml
+ *   {root}/workspace-configs/{id}/metadata.yaml + WORKSPACE.md (optional)
  *
  * @example
  * const adapter = new FilesystemAdapter('./registry');
@@ -109,7 +113,7 @@ class FilesystemAdapter {
         if (!result.success) {
             throw new errors_js_1.InvalidMetadataError(metaPath, result.error.errors[0]?.message ?? 'schema validation failed');
         }
-        // Read content (SKILL.md / AGENT.md) — opaque, never parsed
+        // Read content (SKILL.md / AGENT.md / WORKSPACE.md) — opaque, never parsed
         let content = '';
         try {
             content = await fs_1.promises.readFile(contentPath, 'utf-8');
@@ -117,7 +121,7 @@ class FilesystemAdapter {
         catch (err) {
             if (err.code !== 'ENOENT')
                 throw err;
-            // Content file optional for plugins
+            // Content file optional for plugins and workspace-configs
         }
         return {
             meta: result.data,
