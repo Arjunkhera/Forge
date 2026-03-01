@@ -1,5 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -8,25 +9,192 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { ForgeCore, type RepoIndexEntry } from '@forge/core';
 import { WorkspaceMetadataStore } from '@forge/core';
+import * as http from 'node:http';
 
-/**
- * Start the Forge MCP server.
- * Exposes ForgeCore operations as MCP tools for LLM consumption.
- *
- * Tools:
- *   forge_search        - Search registry for artifacts
- *   forge_add           - Add artifact to forge.yaml
- *   forge_install       - Run full install pipeline
- *   forge_resolve       - Resolve a single artifact ref
- *   forge_list          - List installed or available artifacts
- *   forge_repo_list     - List repositories from index
- *   forge_repo_resolve  - Resolve a repository by name or URL
- *   forge_workspace_create - Create a new workspace from config
- *   forge_workspace_list - List tracked workspaces
- *   forge_workspace_delete - Delete a workspace by ID
- *   forge_workspace_status - Get full details for a workspace
- */
-export async function startMcpServer(workspaceRoot: string = process.cwd()): Promise<void> {
+const startTime = Date.now();
+
+// ─── JSON logging ──────────────────────────────────────────────────────────
+
+function log(level: string, message: string, extra?: Record<string, unknown>) {
+  const entry = { level, message, timestamp: new Date().toISOString(), ...extra };
+  process.stderr.write(JSON.stringify(entry) + '\n');
+}
+
+// ─── Tool definitions ──────────────────────────────────────────────────────
+
+const TOOLS = [
+  {
+    name: 'forge_search',
+    description:
+      'Search the Forge registry for skills, agents, or plugins. Use this to discover what artifacts are available before installing them.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        query: { type: 'string', description: 'Search query (e.g., "developer", "testing")' },
+        type: {
+          type: 'string',
+          enum: ['skill', 'agent', 'plugin'],
+          description: 'Filter by artifact type (optional)',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'forge_add',
+    description:
+      'Add one or more artifact refs to forge.yaml. Use after searching to add an artifact to the workspace configuration.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        refs: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Artifact refs to add, e.g., ["skill:developer@1.0.0", "agent:sdlc-agent"]',
+        },
+      },
+      required: ['refs'],
+    },
+  },
+  {
+    name: 'forge_install',
+    description:
+      'Run the full install pipeline: resolve all artifacts from forge.yaml and emit them to the workspace. Call this after forge_add.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        target: {
+          type: 'string',
+          enum: ['claude-code', 'cursor', 'plugin'],
+          description: 'Compile target (default: claude-code)',
+        },
+        dryRun: {
+          type: 'boolean',
+          description: 'Preview changes without writing files',
+        },
+      },
+    },
+  },
+  {
+    name: 'forge_resolve',
+    description:
+      'Resolve a single artifact reference and return its metadata and dependencies. Useful for inspecting an artifact before installing.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        ref: {
+          type: 'string',
+          description: 'Artifact ref, e.g., "skill:developer@1.0.0"',
+        },
+      },
+      required: ['ref'],
+    },
+  },
+  {
+    name: 'forge_list',
+    description:
+      'List artifacts. Use scope="installed" to see what\'s currently installed, or scope="available" to see what\'s in the registry.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        scope: {
+          type: 'string',
+          enum: ['installed', 'available'],
+          description: 'Which artifacts to list',
+        },
+      },
+    },
+  },
+  {
+    name: 'forge_repo_list',
+    description:
+      'List repositories from the local index. Filter by query (name, path, or URL) and/or language. Automatically scans if no index exists.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query to filter repositories (optional)',
+        },
+        language: {
+          type: 'string',
+          description: 'Filter by programming language (optional)',
+        },
+      },
+    },
+  },
+  {
+    name: 'forge_repo_resolve',
+    description:
+      'Find a specific repository by name or remote URL. Automatically scans if no index exists.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Repository name to search for (optional)',
+        },
+        remoteUrl: {
+          type: 'string',
+          description: 'Remote URL (https or git@) to match against (optional)',
+        },
+      },
+    },
+  },
+  {
+    name: 'forge_workspace_create',
+    description: 'Create a new workspace from a workspace config. Installs plugins, creates git worktrees, and emits MCP configs and environment variables.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        config: { type: 'string', description: 'Workspace config artifact name (e.g., "sdlc-default")' },
+        configVersion: { type: 'string', description: 'Version constraint (default: latest)' },
+        storyId: { type: 'string', description: 'Anvil work item ID to link to this workspace' },
+        storyTitle: { type: 'string', description: 'Cached story title for display' },
+        repos: { type: 'array', items: { type: 'string' }, description: 'Specific repo names to include' },
+      },
+      required: ['config'],
+    },
+  },
+  {
+    name: 'forge_workspace_list',
+    description: 'List tracked workspaces with optional status or story filter.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        status: { type: 'string', enum: ['active', 'paused', 'completed', 'archived'], description: 'Filter by workspace status' },
+        storyId: { type: 'string', description: 'Filter by linked story ID' },
+      },
+    },
+  },
+  {
+    name: 'forge_workspace_delete',
+    description: 'Delete a workspace by ID. Removes git worktrees and workspace folder from disk.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        id: { type: 'string', description: 'Workspace ID (e.g., "ws-abc12345")' },
+        force: { type: 'boolean', description: 'Force delete even if uncommitted changes exist' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'forge_workspace_status',
+    description: 'Get full details for a single workspace by ID.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        id: { type: 'string', description: 'Workspace ID' },
+      },
+      required: ['id'],
+    },
+  },
+];
+
+// ─── Tool handler ──────────────────────────────────────────────────────────
+
+function buildServer(workspaceRoot: string): Server {
   const forge = new ForgeCore(workspaceRoot);
 
   const server = new Server(
@@ -34,180 +202,10 @@ export async function startMcpServer(workspaceRoot: string = process.cwd()): Pro
     { capabilities: { tools: {} } },
   );
 
-  // List available tools
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      {
-        name: 'forge_search',
-        description:
-          'Search the Forge registry for skills, agents, or plugins. Use this to discover what artifacts are available before installing them.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            query: { type: 'string', description: 'Search query (e.g., "developer", "testing")' },
-            type: {
-              type: 'string',
-              enum: ['skill', 'agent', 'plugin'],
-              description: 'Filter by artifact type (optional)',
-            },
-          },
-          required: ['query'],
-        },
-      },
-      {
-        name: 'forge_add',
-        description:
-          'Add one or more artifact refs to forge.yaml. Use after searching to add an artifact to the workspace configuration.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            refs: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'Artifact refs to add, e.g., ["skill:developer@1.0.0", "agent:sdlc-agent"]',
-            },
-          },
-          required: ['refs'],
-        },
-      },
-      {
-        name: 'forge_install',
-        description:
-          'Run the full install pipeline: resolve all artifacts from forge.yaml and emit them to the workspace. Call this after forge_add.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            target: {
-              type: 'string',
-              enum: ['claude-code', 'cursor', 'plugin'],
-              description: 'Compile target (default: claude-code)',
-            },
-            dryRun: {
-              type: 'boolean',
-              description: 'Preview changes without writing files',
-            },
-          },
-        },
-      },
-      {
-        name: 'forge_resolve',
-        description:
-          'Resolve a single artifact reference and return its metadata and dependencies. Useful for inspecting an artifact before installing.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            ref: {
-              type: 'string',
-              description: 'Artifact ref, e.g., "skill:developer@1.0.0"',
-            },
-          },
-          required: ['ref'],
-        },
-      },
-      {
-        name: 'forge_list',
-        description:
-          'List artifacts. Use scope="installed" to see what\'s currently installed, or scope="available" to see what\'s in the registry.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            scope: {
-              type: 'string',
-              enum: ['installed', 'available'],
-              description: 'Which artifacts to list',
-            },
-          },
-        },
-      },
-      {
-        name: 'forge_repo_list',
-        description:
-          'List repositories from the local index. Filter by query (name, path, or URL) and/or language. Automatically scans if no index exists.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            query: {
-              type: 'string',
-              description: 'Search query to filter repositories (optional)',
-            },
-            language: {
-              type: 'string',
-              description: 'Filter by programming language (optional)',
-            },
-          },
-        },
-      },
-      {
-        name: 'forge_repo_resolve',
-        description:
-          'Find a specific repository by name or remote URL. Automatically scans if no index exists.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            name: {
-              type: 'string',
-              description: 'Repository name to search for (optional)',
-            },
-            remoteUrl: {
-              type: 'string',
-              description: 'Remote URL (https or git@) to match against (optional)',
-            },
-          },
-        },
-      },
-      {
-        name: 'forge_workspace_create',
-        description: 'Create a new workspace from a workspace config. Installs plugins, creates git worktrees, and emits MCP configs and environment variables.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            config: { type: 'string', description: 'Workspace config artifact name (e.g., "sdlc-default")' },
-            configVersion: { type: 'string', description: 'Version constraint (default: latest)' },
-            storyId: { type: 'string', description: 'Anvil work item ID to link to this workspace' },
-            storyTitle: { type: 'string', description: 'Cached story title for display' },
-            repos: { type: 'array', items: { type: 'string' }, description: 'Specific repo names to include' },
-          },
-          required: ['config'],
-        },
-      },
-      {
-        name: 'forge_workspace_list',
-        description: 'List tracked workspaces with optional status or story filter.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            status: { type: 'string', enum: ['active', 'paused', 'completed', 'archived'], description: 'Filter by workspace status' },
-            storyId: { type: 'string', description: 'Filter by linked story ID' },
-          },
-        },
-      },
-      {
-        name: 'forge_workspace_delete',
-        description: 'Delete a workspace by ID. Removes git worktrees and workspace folder from disk.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            id: { type: 'string', description: 'Workspace ID (e.g., "ws-abc12345")' },
-            force: { type: 'boolean', description: 'Force delete even if uncommitted changes exist' },
-          },
-          required: ['id'],
-        },
-      },
-      {
-        name: 'forge_workspace_status',
-        description: 'Get full details for a single workspace by ID.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            id: { type: 'string', description: 'Workspace ID' },
-          },
-          required: ['id'],
-        },
-      },
-    ],
+  server.setRequestHandler(ListToolsRequestSchema, async (_req: ListToolsRequest) => ({
+    tools: TOOLS,
   }));
 
-  // Handle tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
     const { name, arguments: args } = request.params;
 
@@ -331,28 +329,14 @@ export async function startMcpServer(workspaceRoot: string = process.cwd()): Pro
           const { name, remoteUrl } = (args ?? {}) as { name?: string; remoteUrl?: string };
           if (!name && !remoteUrl) {
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  error: true,
-                  message: 'Either name or remoteUrl must be provided',
-                }),
-              }],
+              content: [{ type: 'text', text: JSON.stringify({ error: true, message: 'Either name or remoteUrl must be provided' }) }],
               isError: true,
             };
           }
           const entry = await forge.repoResolve({ name, remoteUrl });
           if (!entry) {
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  error: true,
-                  code: 'REPO_NOT_FOUND',
-                  message: 'Repository not found',
-                  suggestion: 'Run: forge repo scan',
-                }),
-              }],
+              content: [{ type: 'text', text: JSON.stringify({ error: true, code: 'REPO_NOT_FOUND', message: 'Repository not found', suggestion: 'Run: forge repo scan' }) }],
               isError: true,
             };
           }
@@ -406,15 +390,12 @@ export async function startMcpServer(workspaceRoot: string = process.cwd()): Pro
         }
 
         case 'forge_workspace_list': {
-          const { status, storyId } = args as { status?: string; storyId?: string };
+          const { status, storyId } = (args ?? {}) as { status?: string; storyId?: string };
           const store = new WorkspaceMetadataStore();
-
           if (storyId) {
             const record = await store.findByStoryId(storyId);
-            const results = record ? [record] : [];
-            return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+            return { content: [{ type: 'text', text: JSON.stringify(record ? [record] : [], null, 2) }] };
           }
-
           const records = await store.list(status ? { status: status as any } : undefined);
           return { content: [{ type: 'text', text: JSON.stringify(records, null, 2) }] };
         }
@@ -423,80 +404,151 @@ export async function startMcpServer(workspaceRoot: string = process.cwd()): Pro
           const { id, force } = args as { id: string; force?: boolean };
           const store = new WorkspaceMetadataStore();
           const record = await store.get(id);
-
           if (!record) {
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  error: true,
-                  code: 'WORKSPACE_NOT_FOUND',
-                  message: `Workspace '${id}' not found`,
-                }, null, 2),
-              }],
+              content: [{ type: 'text', text: JSON.stringify({ error: true, code: 'WORKSPACE_NOT_FOUND', message: `Workspace '${id}' not found` }, null, 2) }],
             };
           }
-
           await store.delete(id);
-          return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                success: true,
-                message: `Workspace '${id}' deleted`,
-              }, null, 2),
-            }],
-          };
+          return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: `Workspace '${id}' deleted` }, null, 2) }] };
         }
 
         case 'forge_workspace_status': {
           const { id } = args as { id: string };
           const store = new WorkspaceMetadataStore();
           const record = await store.get(id);
-
           if (!record) {
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  error: true,
-                  code: 'WORKSPACE_NOT_FOUND',
-                  message: `Workspace '${id}' not found`,
-                }, null, 2),
-              }],
+              content: [{ type: 'text', text: JSON.stringify({ error: true, code: 'WORKSPACE_NOT_FOUND', message: `Workspace '${id}' not found` }, null, 2) }],
             };
           }
-
           return { content: [{ type: 'text', text: JSON.stringify(record, null, 2) }] };
         }
 
         default:
-          return {
-            content: [{ type: 'text', text: `Unknown tool: ${name}` }],
-            isError: true,
-          };
+          return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
       }
     } catch (err: any) {
       return {
         content: [{
           type: 'text',
-          text: JSON.stringify({
-            error: err.code ?? 'UNKNOWN_ERROR',
-            message: err.message,
-            suggestion: err.suggestion,
-          }),
+          text: JSON.stringify({ error: err.code ?? 'UNKNOWN_ERROR', message: err.message, suggestion: err.suggestion }),
         }],
         isError: true,
       };
     }
   });
 
+  return server;
+}
+
+// ─── Stdio transport (original, for local/agent use) ───────────────────────
+
+/**
+ * Start the Forge MCP server on stdio transport.
+ * Used for local Claude Code integration.
+ */
+export async function startMcpServer(workspaceRoot: string = process.cwd()): Promise<void> {
+  const server = buildServer(workspaceRoot);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('[Forge MCP] Server started on stdio');
 }
 
-// Auto-start if run directly (using dynamic check to avoid import.meta issues with CommonJS)
+// ─── HTTP transport (for Docker / network use) ─────────────────────────────
+
+export interface HttpServerOptions {
+  port: number;
+  host: string;
+  workspaceRoot?: string;
+}
+
+/**
+ * Start the Forge MCP server on HTTP (StreamableHTTP) transport.
+ * Features:
+ *   - /health endpoint returning service status and uptime
+ *   - Graceful shutdown on SIGTERM/SIGINT
+ *   - JSON logging to stderr
+ *
+ * Used in Docker via `forge serve --transport http`.
+ */
+export async function startMcpServerHttp(opts: HttpServerOptions): Promise<void> {
+  const { port, host, workspaceRoot = process.cwd() } = opts;
+
+  const server = buildServer(workspaceRoot);
+
+  // Stateless mode — no session management needed for Docker use
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+  });
+
+  const httpServer = http.createServer(async (req, res) => {
+    // Health check endpoint
+    if (req.method === 'GET' && req.url === '/health') {
+      const uptime = Math.floor((Date.now() - startTime) / 1000);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'ok',
+        service: 'forge',
+        version: '0.1.0',
+        uptime_seconds: uptime,
+      }));
+      return;
+    }
+
+    // All other requests go to the MCP transport
+    try {
+      await transport.handleRequest(req, res);
+    } catch (error) {
+      log('error', 'HTTP request handling failed', {
+        path: req.url,
+        method: req.method,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Internal server error' }));
+      }
+    }
+  });
+
+  await server.connect(transport);
+
+  // Graceful shutdown
+  const shutdown = (signal: string) => {
+    log('info', `Received ${signal}, shutting down gracefully...`);
+    httpServer.close(() => {
+      log('info', 'HTTP server closed');
+      process.exit(0);
+    });
+    setTimeout(() => {
+      log('warn', 'Forcing shutdown after timeout');
+      process.exit(1);
+    }, 5000);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
+  return new Promise<void>((resolve, reject) => {
+    httpServer.listen(port, host, () => {
+      log('info', 'Forge MCP HTTP server started', {
+        host,
+        port,
+        url: `http://${host}:${port}`,
+      });
+      resolve();
+    });
+    httpServer.on('error', (error) => {
+      log('error', 'HTTP server failed to start', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      reject(error);
+    });
+  });
+}
+
+// Auto-start if run directly via stdio (legacy behaviour)
 const isDirectRun = process.argv[1]?.endsWith('/index.ts') || process.argv[1]?.endsWith('\\index.ts');
 if (isDirectRun && typeof require !== 'undefined') {
   startMcpServer(process.cwd()).catch(err => {
