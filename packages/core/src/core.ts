@@ -1,6 +1,8 @@
 import path from 'path';
 import { WorkspaceManager } from './workspace/workspace-manager.js';
 import { WorkspaceCreator, type WorkspaceCreateOptions } from './workspace/workspace-creator.js';
+import { WorkspaceLifecycleManager } from './workspace/workspace-lifecycle.js';
+import { WorkspaceMetadataStore } from './workspace/workspace-metadata-store.js';
 import { Registry } from './registry/registry.js';
 import { Resolver } from './resolver/resolver.js';
 import { Compiler } from './compiler/compiler.js';
@@ -52,6 +54,8 @@ export class ForgeCore {
   private readonly workspaceManager: WorkspaceManager;
   private readonly compiler: Compiler;
   private readonly globalConfigPath: string | undefined;
+  private readonly lifecycleManager: WorkspaceLifecycleManager;
+  private readonly metadataStore: WorkspaceMetadataStore;
 
   constructor(
     private readonly workspaceRoot: string = process.cwd(),
@@ -61,6 +65,8 @@ export class ForgeCore {
     this.compiler = new Compiler();
     this.compiler.register(new ClaudeCodeStrategy());
     this.globalConfigPath = options?.globalConfigPath;
+    this.metadataStore = new WorkspaceMetadataStore();
+    this.lifecycleManager = new WorkspaceLifecycleManager(undefined, this.metadataStore);
   }
 
   /**
@@ -333,6 +339,58 @@ export class ForgeCore {
   async workspaceCreate(options: WorkspaceCreateOptions): Promise<WorkspaceRecord> {
     const creator = new WorkspaceCreator(this);
     return creator.create(options);
+  }
+
+  /**
+   * List workspaces, optionally filtered by status.
+   */
+  async workspaceList(filter?: { status?: string }): Promise<WorkspaceRecord[]> {
+    const filterObj = filter?.status ? { status: filter.status as any } : undefined;
+    return this.metadataStore.list(filterObj);
+  }
+
+  /**
+   * Get status of a workspace.
+   */
+  async workspaceStatus(id: string): Promise<WorkspaceRecord | null> {
+    return this.metadataStore.get(id);
+  }
+
+  /**
+   * Pause a workspace.
+   */
+  async workspacePause(id: string): Promise<WorkspaceRecord> {
+    return this.lifecycleManager.pause(id);
+  }
+
+  /**
+   * Complete a workspace.
+   */
+  async workspaceComplete(id: string): Promise<WorkspaceRecord> {
+    return this.lifecycleManager.complete(id);
+  }
+
+  /**
+   * Delete a workspace.
+   */
+  async workspaceDelete(id: string, opts?: { force?: boolean }): Promise<void> {
+    return this.lifecycleManager.delete(id, opts);
+  }
+
+  /**
+   * Archive a workspace.
+   */
+  async workspaceArchive(id: string): Promise<WorkspaceRecord> {
+    return this.lifecycleManager.archive(id);
+  }
+
+  /**
+   * Clean workspaces based on retention policy.
+   */
+  async workspaceClean(opts?: { dryRun?: boolean }): Promise<{ cleaned: string[]; skipped: string[] }> {
+    const globalConfig = await loadGlobalConfig(this.globalConfigPath);
+    const retentionDays = globalConfig.workspace.retention_days;
+    return this.lifecycleManager.clean(retentionDays, opts);
   }
 
   // Internal helpers

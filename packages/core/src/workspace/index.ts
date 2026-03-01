@@ -11,3 +11,4 @@ export {
   generateBranchName,
   type WorkspaceCreateOptions,
 } from './workspace-creator.js';
+export { WorkspaceLifecycleManager } from './workspace-lifecycle.js';
