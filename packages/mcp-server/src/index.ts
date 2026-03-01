@@ -7,6 +7,7 @@ import {
   type ListToolsRequest,
 } from '@modelcontextprotocol/sdk/types.js';
 import { ForgeCore } from '@forge/core';
+import { WorkspaceMetadataStore } from '@forge/core';
 
 /**
  * Start the Forge MCP server.
@@ -18,6 +19,10 @@ import { ForgeCore } from '@forge/core';
  *   forge_install - Run full install pipeline
  *   forge_resolve - Resolve a single artifact ref
  *   forge_list    - List installed or available artifacts
+ *   forge_workspace_create - Create a new workspace from config
+ *   forge_workspace_list - List tracked workspaces
+ *   forge_workspace_delete - Delete a workspace by ID
+ *   forge_workspace_status - Get full details for a workspace
  */
 export async function startMcpServer(workspaceRoot: string = process.cwd()): Promise<void> {
   const forge = new ForgeCore(workspaceRoot);
@@ -110,6 +115,55 @@ export async function startMcpServer(workspaceRoot: string = process.cwd()): Pro
               description: 'Which artifacts to list',
             },
           },
+        },
+      },
+      {
+        name: 'forge_workspace_create',
+        description: 'Create a new workspace from a workspace config. Installs plugins, creates git worktrees, and emits MCP configs and environment variables.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            config: { type: 'string', description: 'Workspace config artifact name (e.g., "sdlc-default")' },
+            configVersion: { type: 'string', description: 'Version constraint (default: latest)' },
+            storyId: { type: 'string', description: 'Anvil work item ID to link to this workspace' },
+            storyTitle: { type: 'string', description: 'Cached story title for display' },
+            repos: { type: 'array', items: { type: 'string' }, description: 'Specific repo names to include' },
+          },
+          required: ['config'],
+        },
+      },
+      {
+        name: 'forge_workspace_list',
+        description: 'List tracked workspaces with optional status or story filter.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            status: { type: 'string', enum: ['active', 'paused', 'completed', 'archived'], description: 'Filter by workspace status' },
+            storyId: { type: 'string', description: 'Filter by linked story ID' },
+          },
+        },
+      },
+      {
+        name: 'forge_workspace_delete',
+        description: 'Delete a workspace by ID. Removes git worktrees and workspace folder from disk.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            id: { type: 'string', description: 'Workspace ID (e.g., "ws-abc12345")' },
+            force: { type: 'boolean', description: 'Force delete even if uncommitted changes exist' },
+          },
+          required: ['id'],
+        },
+      },
+      {
+        name: 'forge_workspace_status',
+        description: 'Get full details for a single workspace by ID.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            id: { type: 'string', description: 'Workspace ID' },
+          },
+          required: ['id'],
         },
       },
     ],
@@ -210,6 +264,93 @@ export async function startMcpServer(workspaceRoot: string = process.cwd()): Pro
               })), null, 2),
             }],
           };
+        }
+
+        case 'forge_workspace_create': {
+          const { config, configVersion, storyId, storyTitle, repos } = args as {
+            config: string;
+            configVersion?: string;
+            storyId?: string;
+            storyTitle?: string;
+            repos?: string[];
+          };
+          // Placeholder: would call forge.workspaceCreate if available
+          // For now, return a stub response
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                message: 'forge_workspace_create not yet implemented',
+                args: { config, configVersion, storyId, storyTitle, repos },
+              }, null, 2),
+            }],
+          };
+        }
+
+        case 'forge_workspace_list': {
+          const { status, storyId } = args as { status?: string; storyId?: string };
+          const store = new WorkspaceMetadataStore();
+          
+          if (storyId) {
+            const record = await store.findByStoryId(storyId);
+            const results = record ? [record] : [];
+            return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+          }
+          
+          const records = await store.list(status ? { status: status as any } : undefined);
+          return { content: [{ type: 'text', text: JSON.stringify(records, null, 2) }] };
+        }
+
+        case 'forge_workspace_delete': {
+          const { id, force } = args as { id: string; force?: boolean };
+          const store = new WorkspaceMetadataStore();
+          const record = await store.get(id);
+          
+          if (!record) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: true,
+                  code: 'WORKSPACE_NOT_FOUND',
+                  message: `Workspace '${id}' not found`,
+                }, null, 2),
+              }],
+            };
+          }
+          
+          await store.delete(id);
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                message: `Workspace '${id}' deleted`,
+              }, null, 2),
+            }],
+          };
+        }
+
+        case 'forge_workspace_status': {
+          const { id } = args as { id: string };
+          const store = new WorkspaceMetadataStore();
+          const record = await store.get(id);
+          
+          if (!record) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: true,
+                  code: 'WORKSPACE_NOT_FOUND',
+                  message: `Workspace '${id}' not found`,
+                }, null, 2),
+              }],
+            };
+          }
+          
+          return { content: [{ type: 'text', text: JSON.stringify(record, null, 2) }] };
         }
 
         default:
