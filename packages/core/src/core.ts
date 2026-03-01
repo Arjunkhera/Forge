@@ -1,5 +1,6 @@
 import path from 'path';
 import { WorkspaceManager } from './workspace/workspace-manager.js';
+import { WorkspaceCreator, type WorkspaceCreateOptions } from './workspace/workspace-creator.js';
 import { Registry } from './registry/registry.js';
 import { Resolver } from './resolver/resolver.js';
 import { Compiler } from './compiler/compiler.js';
@@ -16,6 +17,7 @@ import type {
   SearchResult,
   ResolvedArtifact,
   LockFile,
+  WorkspaceRecord,
 } from './models/index.js';
 import type { ForgeConfig, RegistryConfig } from './models/forge-config.js';
 import type { RepoIndex, RepoIndexEntry } from './models/repo-index.js';
@@ -323,6 +325,16 @@ export class ForgeCore {
     return null;
   }
 
+  /**
+   * Create a new workspace from a workspace config artifact.
+   * Resolves the workspace config, sets up folders, installs plugins,
+   * creates git worktrees, and registers in metadata store.
+   */
+  async workspaceCreate(options: WorkspaceCreateOptions): Promise<WorkspaceRecord> {
+    const creator = new WorkspaceCreator(this);
+    return creator.create(options);
+  }
+
   // Internal helpers
 
   private async buildRegistry(): Promise<Registry> {
@@ -415,6 +427,7 @@ export class ForgeCore {
     if (remaining.startsWith('skill:')) { type = 'skill'; remaining = remaining.slice(6); }
     else if (remaining.startsWith('agent:')) { type = 'agent'; remaining = remaining.slice(6); }
     else if (remaining.startsWith('plugin:')) { type = 'plugin'; remaining = remaining.slice(7); }
+    else if (remaining.startsWith('workspace-config:')) { type = 'workspace-config'; remaining = remaining.slice(17); }
 
     // Extract version suffix
     const atIdx = remaining.indexOf('@');

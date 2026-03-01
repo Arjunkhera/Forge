@@ -4,3 +4,10 @@ export {
   generateWorkspaceId,
   WORKSPACES_FILE,
 } from './workspace-metadata-store.js';
+export {
+  WorkspaceCreator,
+  WorkspaceCreateError,
+  slugify,
+  generateBranchName,
+  type WorkspaceCreateOptions,
+} from './workspace-creator.js';

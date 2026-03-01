@@ -294,6 +294,45 @@ repo
     }
   });
 
+// forge workspace — workspace management
+const workspace = program
+  .command('workspace')
+  .description('Manage Forge workspaces');
+
+workspace
+  .command('create')
+  .description('Create a new workspace from a workspace config')
+  .requiredOption('-c, --config <name>', 'Workspace config artifact ID (e.g., sdlc-default)')
+  .option('-v, --config-version <version>', 'Config version constraint (default: *)')
+  .option('-s, --story <id>', 'Story ID to link to the workspace')
+  .option('-t, --title <title>', 'Story title')
+  .option('-r, --repos <names>', 'Comma-separated list of repo names to include')
+  .option('-m, --mount <path>', 'Override mount path')
+  .action(async (options: { config: string; configVersion?: string; story?: string; title?: string; repos?: string; mount?: string }) => {
+    const forge = new ForgeCore(program.opts().config);
+    try {
+      const workspaceRecord = await forge.workspaceCreate({
+        configName: options.config,
+        configVersion: options.configVersion,
+        storyId: options.story,
+        storyTitle: options.title,
+        repos: options.repos ? options.repos.split(',').map(r => r.trim()) : undefined,
+        mountPath: options.mount,
+      });
+
+      console.log(chalk.green(`✓ Created workspace '${workspaceRecord.name}'`));
+      console.log(`  ID:   ${workspaceRecord.id}`);
+      console.log(`  Path: ${workspaceRecord.path}`);
+      if (workspaceRecord.repos.length > 0) {
+        console.log(`  Repos: ${workspaceRecord.repos.map(r => r.name).join(', ')}`);
+      }
+    } catch (err: any) {
+      console.error(chalk.red(`✗ ${err.message}`));
+      if (err.suggestion) console.error(chalk.gray(`  Hint: ${err.suggestion}`));
+      process.exit(1);
+    }
+  });
+
 // forge serve — starts MCP server
 program
   .command('serve')
