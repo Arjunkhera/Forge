@@ -321,16 +321,32 @@ class ForgeCore {
     }
     // Internal helpers
     async buildRegistry() {
-        let config;
+        let config = null;
         try {
             config = await this.workspaceManager.readConfig();
         }
         catch {
-            // No workspace config — return empty registry backed by local default
-            return new registry_js_1.Registry(new filesystem_adapter_js_1.FilesystemAdapter(path_1.default.join(this.workspaceRoot, 'registry')));
+            // No workspace config — fall through to global config below
         }
         // Load global config (~/.forge/config.yaml) for fallback registries
         const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
+        if (!config) {
+            // No workspace forge.yaml — use global config registries only
+            const adapters = [];
+            for (const reg of globalConfig.registries) {
+                try {
+                    adapters.push(this.buildAdapter(reg));
+                }
+                catch (err) {
+                    console.warn(`[ForgeCore] Skipping registry '${reg.name}': ${err.message}`);
+                }
+            }
+            if (adapters.length === 0) {
+                return new registry_js_1.Registry(new filesystem_adapter_js_1.FilesystemAdapter(path_1.default.join(this.workspaceRoot, 'registry')));
+            }
+            const adapter = adapters.length === 1 ? adapters[0] : new composite_adapter_js_1.CompositeAdapter({ adapters });
+            return new registry_js_1.Registry(adapter);
+        }
         // Workspace registries first (higher priority), then global as fallbacks.
         // Deduplicate by name — workspace overrides global.
         const workspaceNames = new Set(config.registries.map(r => r.name));

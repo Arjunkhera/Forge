@@ -38,6 +38,7 @@ exports.startMcpServerHttp = startMcpServerHttp;
 const index_js_1 = require("@modelcontextprotocol/sdk/server/index.js");
 const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
 const streamableHttp_js_1 = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
+const node_crypto_1 = require("node:crypto");
 const types_js_1 = require("@modelcontextprotocol/sdk/types.js");
 const core_1 = require("@forge/core");
 const core_2 = require("@forge/core");
@@ -457,11 +458,8 @@ async function startMcpServer(workspaceRoot = process.cwd()) {
  */
 async function startMcpServerHttp(opts) {
     const { port, host, workspaceRoot = process.cwd() } = opts;
-    const server = buildServer(workspaceRoot);
-    // Stateless mode — no session management needed for Docker use
-    const transport = new streamableHttp_js_1.StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-    });
+    // Session registry: maps sessionId -> transport
+    const sessions = new Map();
     const httpServer = http.createServer(async (req, res) => {
         // Health check endpoint
         if (req.method === 'GET' && req.url === '/health') {
@@ -477,6 +475,27 @@ async function startMcpServerHttp(opts) {
         }
         // All other requests go to the MCP transport
         try {
+            const sessionId = req.headers['mcp-session-id'];
+            let transport = sessionId ? sessions.get(sessionId) : undefined;
+            if (!transport) {
+                // New session: create a fresh server and transport instance
+                const server = buildServer(workspaceRoot);
+                transport = new streamableHttp_js_1.StreamableHTTPServerTransport({
+                    sessionIdGenerator: () => (0, node_crypto_1.randomUUID)(),
+                    enableJsonResponse: true,
+                    onsessioninitialized: (sid) => {
+                        sessions.set(sid, transport);
+                        log('info', 'MCP session initialized', { sessionId: sid });
+                    },
+                });
+                transport.onclose = () => {
+                    if (transport.sessionId) {
+                        sessions.delete(transport.sessionId);
+                        log('info', 'MCP session closed', { sessionId: transport.sessionId });
+                    }
+                };
+                await server.connect(transport);
+            }
             await transport.handleRequest(req, res);
         }
         catch (error) {
@@ -491,7 +510,6 @@ async function startMcpServerHttp(opts) {
             }
         }
     });
-    await server.connect(transport);
     // Graceful shutdown
     const shutdown = (signal) => {
         log('info', `Received ${signal}, shutting down gracefully...`);

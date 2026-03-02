@@ -1,6 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { randomUUID } from 'node:crypto';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -475,12 +476,8 @@ export interface HttpServerOptions {
 export async function startMcpServerHttp(opts: HttpServerOptions): Promise<void> {
   const { port, host, workspaceRoot = process.cwd() } = opts;
 
-  const server = buildServer(workspaceRoot);
-
-  // Stateless mode — no session management needed for Docker use
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-  });
+  // Session registry: maps sessionId -> transport
+  const sessions = new Map<string, StreamableHTTPServerTransport>();
 
   const httpServer = http.createServer(async (req, res) => {
     // Health check endpoint
@@ -498,6 +495,29 @@ export async function startMcpServerHttp(opts: HttpServerOptions): Promise<void>
 
     // All other requests go to the MCP transport
     try {
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
+      let transport = sessionId ? sessions.get(sessionId) : undefined;
+
+      if (!transport) {
+        // New session: create a fresh server and transport instance
+        const server = buildServer(workspaceRoot);
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          enableJsonResponse: true,
+          onsessioninitialized: (sid) => {
+            sessions.set(sid, transport!);
+            log('info', 'MCP session initialized', { sessionId: sid });
+          },
+        });
+        transport.onclose = () => {
+          if (transport!.sessionId) {
+            sessions.delete(transport!.sessionId);
+            log('info', 'MCP session closed', { sessionId: transport!.sessionId });
+          }
+        };
+        await server.connect(transport);
+      }
+
       await transport.handleRequest(req, res);
     } catch (error) {
       log('error', 'HTTP request handling failed', {
@@ -511,8 +531,6 @@ export async function startMcpServerHttp(opts: HttpServerOptions): Promise<void>
       }
     }
   });
-
-  await server.connect(transport);
 
   // Graceful shutdown
   const shutdown = (signal: string) => {

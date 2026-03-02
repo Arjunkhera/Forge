@@ -18,8 +18,10 @@ RUN npm ci
 # Copy source files and per-package tsconfigs
 COPY packages/ ./packages/
 
-# Build all packages in dependency order (core → cli, mcp-server)
-RUN npm run build --workspaces --if-present
+# Build packages in explicit dependency order: core → mcp-server → cli
+RUN npm run build --workspace=packages/core \
+    && npm run build --workspace=packages/mcp-server \
+    && npm run build --workspace=packages/cli
 
 
 # ─── Stage 2: Runtime ─────────────────────────────────────────────────────
