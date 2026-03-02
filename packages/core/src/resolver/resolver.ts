@@ -159,6 +159,15 @@ export class Resolver {
       }
     }
 
+    // For plugins: resolve their listed skills
+    if (meta.type === 'plugin' && 'skills' in meta && Array.isArray(meta.skills)) {
+      for (const skillId of (meta.skills as string[])) {
+        if (!deps.find(d => d.id === skillId)) {
+          deps.push({ type: 'skill', id: skillId, version: '*' });
+        }
+      }
+    }
+
     // For workspace-configs: resolve referenced plugins and skills
     if (meta.type === 'workspace-config' && 'plugins' in meta && Array.isArray(meta.plugins)) {
       for (const pluginId of (meta.plugins as string[])) {

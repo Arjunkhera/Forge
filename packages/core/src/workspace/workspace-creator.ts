@@ -243,7 +243,9 @@ export class WorkspaceCreator {
         outputDir: '.',
         registries: globalConfig.registries,
         artifacts: {
-          skills: {},
+          skills: Object.fromEntries(
+            workspaceConfigMeta.skills.map(s => [s, '*']),
+          ),
           agents: {},
           plugins: Object.fromEntries(
             workspaceConfigMeta.plugins.map(p => [p, '*']),
