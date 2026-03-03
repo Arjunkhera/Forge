@@ -143,6 +143,21 @@ const TOOLS = [
     },
   },
   {
+    name: 'forge_repo_workflow',
+    description:
+      'Resolve the git workflow configuration for a repository. Checks Vault repo profile first (team-wide conventions), then auto-detects from local git remotes, then falls back to defaults. Returns strategy (owner|fork|direct), default branch, PR target, and hosting info.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Repository name to resolve workflow for',
+        },
+      },
+      required: ['name'],
+    },
+  },
+  {
     name: 'forge_workspace_create',
     description: 'Create a new workspace from a workspace config. Installs plugins, creates git worktrees, and emits MCP configs and environment variables.',
     inputSchema: {
@@ -354,6 +369,23 @@ function buildServer(workspaceRoot: string): Server {
                 lastCommitDate: entry.lastCommitDate,
                 lastScannedAt: entry.lastScannedAt,
               }, null, 2),
+            }],
+          };
+        }
+
+        case 'forge_repo_workflow': {
+          const { name } = (args ?? {}) as { name: string };
+          if (!name) {
+            return {
+              content: [{ type: 'text', text: JSON.stringify({ error: true, message: 'name is required' }) }],
+              isError: true,
+            };
+          }
+          const workflow = await forge.repoWorkflow(name);
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify(workflow, null, 2),
             }],
           };
         }

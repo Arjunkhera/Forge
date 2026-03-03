@@ -87,3 +87,11 @@ export {
   type RepoIndexEntry,
   type RepoIndex,
 } from './repo-index.js';
+
+// Repo Workflow
+export {
+  WorkflowStrategySchema,
+  RepoWorkflowSchema,
+  type WorkflowStrategy,
+  type RepoWorkflow,
+} from './repo-workflow.js';
