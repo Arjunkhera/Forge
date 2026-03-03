@@ -1,4 +1,6 @@
 import path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { WorkspaceManager } from './workspace/workspace-manager.js';
 import { WorkspaceCreator, type WorkspaceCreateOptions } from './workspace/workspace-creator.js';
 import { WorkspaceLifecycleManager } from './workspace/workspace-lifecycle.js';
@@ -23,11 +25,15 @@ import type {
 } from './models/index.js';
 import type { ForgeConfig, RegistryConfig } from './models/forge-config.js';
 import type { RepoIndex, RepoIndexEntry } from './models/repo-index.js';
+import type { RepoWorkflow, WorkflowStrategy } from './models/repo-workflow.js';
 import { ForgeError } from './adapters/errors.js';
 import { loadGlobalConfig } from './config/global-config-loader.js';
 import { scan as repoScannerScan } from './repo/repo-scanner.js';
 import { loadRepoIndex, saveRepoIndex } from './repo/repo-index-store.js';
 import { RepoIndexQuery } from './repo/repo-index-query.js';
+import { VaultClient, extractHostingFromUrl } from './vault/vault-client.js';
+
+const execFileAsync = promisify(execFile);
 
 export interface InstallOptions {
   target?: ForgeConfig['target'];
@@ -332,6 +338,72 @@ export class ForgeCore {
   }
 
   /**
+   * Resolve the git workflow configuration for a repository.
+   *
+   * Resolution order:
+   *   1. Vault repo profile  — shared, team-wide knowledge (hosting + workflow fields)
+   *   2. Auto-detect         — inspect local git remotes (upstream → fork, else direct)
+   *   3. Default fallback    — direct strategy, main branch
+   */
+  async repoWorkflow(repoName: string): Promise<RepoWorkflow> {
+    const globalConfig = await loadGlobalConfig(this.globalConfigPath);
+    const vaultEndpoint = globalConfig.mcp_endpoints.vault;
+
+    // --- Tier 1: Vault repo profile ---
+    if (vaultEndpoint) {
+      try {
+        const client = new VaultClient(vaultEndpoint.url);
+        const profile = await client.fetchRepoProfile(repoName);
+        if (profile?.workflow?.strategy) {
+          const strategy = profile.workflow.strategy as WorkflowStrategy;
+          const defaultBranch = profile.workflow['default-branch'] ?? 'main';
+          return {
+            repoName,
+            hosting: {
+              hostname: profile.hosting?.hostname ?? 'github.com',
+              org: profile.hosting?.org ?? '',
+            },
+            workflow: {
+              strategy,
+              defaultBranch,
+              prTarget: profile.workflow['pr-target'] ?? defaultBranch,
+              branchConvention: profile.workflow['branch-convention'],
+            },
+            source: 'vault',
+          };
+        }
+      } catch {
+        // Vault unreachable — fall through to auto-detect
+      }
+    }
+
+    // --- Tier 2: Auto-detect from local git remotes ---
+    const repo = await this.repoResolve({ name: repoName });
+    if (repo) {
+      const strategy = await this._detectWorkflowStrategy(repo.localPath);
+      const hosting = extractHostingFromUrl(repo.remoteUrl);
+      return {
+        repoName,
+        hosting,
+        workflow: {
+          strategy,
+          defaultBranch: repo.defaultBranch,
+          prTarget: repo.defaultBranch,
+        },
+        source: 'auto-detect',
+      };
+    }
+
+    // --- Tier 3: Default fallback ---
+    return {
+      repoName,
+      hosting: { hostname: 'github.com', org: '' },
+      workflow: { strategy: 'direct', defaultBranch: 'main', prTarget: 'main' },
+      source: 'default',
+    };
+  }
+
+  /**
    * Create a new workspace from a workspace config artifact.
    * Resolves the workspace config, sets up folders, installs plugins,
    * creates git worktrees, and registers in metadata store.
@@ -394,6 +466,26 @@ export class ForgeCore {
   }
 
   // Internal helpers
+
+  /**
+   * Detect git workflow strategy from a repo's local remotes.
+   *
+   * - Has an 'upstream' remote → fork strategy (push to origin fork, PR against upstream)
+   * - Otherwise              → direct strategy (push feature branch to shared origin)
+   */
+  private async _detectWorkflowStrategy(localPath: string): Promise<WorkflowStrategy> {
+    try {
+      const { stdout } = await execFileAsync('git', ['remote'], {
+        cwd: localPath,
+        timeout: 3000,
+      });
+      const remotes = stdout.trim().split('\n').map(r => r.trim()).filter(Boolean);
+      if (remotes.includes('upstream')) return 'fork';
+    } catch {
+      // git not available or not a git repo — fall back to direct
+    }
+    return 'direct';
+  }
 
   private async buildRegistry(): Promise<Registry> {
     let config: ForgeConfig | null = null;

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
@@ -95,6 +95,7 @@ describe('WorkspaceCreator (unit tests with mocks)', () => {
   const mockForge = {
     resolve: vi.fn(),
     install: vi.fn(),
+    repoWorkflow: vi.fn(),
   };
 
   beforeEach(() => {
@@ -125,3 +126,82 @@ describe('WorkspaceCreator (unit tests with mocks)', () => {
     });
   });
 });
+
+describe('reference clone integration', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'forge-refclone-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('clones a local repo and creates the feature branch', async () => {
+    // Set up a bare local repo to act as the "remote"
+    const remoteDir = path.join(tmpDir, 'remote.git');
+    const localDir = path.join(tmpDir, 'local');
+    const cloneDir = path.join(tmpDir, 'ws', 'myrepo');
+
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const runGit = promisify(execFile);
+
+    // Create a minimal git repo with one commit
+    await runGit('git', ['init', '--bare', remoteDir]);
+    await runGit('git', ['clone', remoteDir, localDir]);
+    await fs.writeFile(path.join(localDir, 'README.md'), '# test');
+    await runGit('git', ['-C', localDir, 'add', '.']);
+    await runGit('git', ['-C', localDir, '-c', 'user.name=Test', '-c', 'user.email=t@t.com',
+      'commit', '-m', 'init']);
+    await runGit('git', ['-C', localDir, 'push', 'origin', 'HEAD:main']);
+
+    // Create workspace destination parent
+    await fs.mkdir(path.join(tmpDir, 'ws'), { recursive: true });
+
+    // Simulate what createReferenceClone does:
+    // git clone --reference <localDir> <remoteDir> <cloneDir>
+    await runGit('git', ['clone', '--reference', localDir, remoteDir, cloneDir]);
+
+    // Verify clone exists and has the README
+    const readme = await fs.readFile(path.join(cloneDir, 'README.md'), 'utf-8');
+    expect(readme).toBe('# test');
+
+    // Create a feature branch
+    await runGit('git', ['-C', cloneDir, 'checkout', '-b', 'feature/test-branch', 'origin/main']);
+
+    const { stdout } = await runGit('git', ['-C', cloneDir, 'branch', '--show-current']);
+    expect(stdout.trim()).toBe('feature/test-branch');
+  });
+
+  it('reference clone is independent — changes do not affect local repo', async () => {
+    const remoteDir = path.join(tmpDir, 'remote.git');
+    const localDir = path.join(tmpDir, 'local');
+    const cloneDir = path.join(tmpDir, 'ws', 'myrepo');
+
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const runGit = promisify(execFile);
+
+    await runGit('git', ['init', '--bare', remoteDir]);
+    await runGit('git', ['clone', remoteDir, localDir]);
+    await fs.writeFile(path.join(localDir, 'README.md'), '# original');
+    await runGit('git', ['-C', localDir, 'add', '.']);
+    await runGit('git', ['-C', localDir, '-c', 'user.name=Test', '-c', 'user.email=t@t.com',
+      'commit', '-m', 'init']);
+    await runGit('git', ['-C', localDir, 'push', 'origin', 'HEAD:main']);
+
+    await fs.mkdir(path.join(tmpDir, 'ws'), { recursive: true });
+    await runGit('git', ['clone', '--reference', localDir, remoteDir, cloneDir]);
+    await runGit('git', ['-C', cloneDir, 'checkout', '-b', 'feature/branch', 'origin/main']);
+
+    // Modify file in clone — local repo must be unaffected
+    await fs.writeFile(path.join(cloneDir, 'README.md'), '# modified in workspace');
+
+    const localReadme = await fs.readFile(path.join(localDir, 'README.md'), 'utf-8');
+    expect(localReadme).toBe('# original');
+  });
+});
+
+import { afterEach } from 'vitest';

@@ -79,53 +79,55 @@ export function generateBranchName(
 }
 
 /**
- * Helper: Create a git worktree for a repository.
+ * Helper: Create a reference clone of a repository.
+ *
+ * Uses `git clone --reference <localPath>` to reuse local objects for speed
+ * while fetching from the remote URL for freshness and full isolation.
+ * Falls back to a plain local clone when no remoteUrl is available.
  */
-async function createGitWorktree(opts: {
-  repoPath: string;
-  worktreePath: string;
-  branchName: string;
-  baseBranch: string;
-  stashFirst: boolean;
+async function createReferenceClone(opts: {
+  localPath: string;     // local clone path — used as --reference for speed
+  remoteUrl: string | null; // remote URL to fetch from; null → local-only clone
+  destPath: string;      // destination path for the new clone
+  branchName: string;    // feature branch to create
+  defaultBranch: string; // remote base branch (e.g. 'main')
 }): Promise<void> {
   const runGit = async (args: string[], cwd: string): Promise<string> => {
-    const { stdout } = await execFileAsync('git', args, { cwd, timeout: 30000 });
+    const { stdout } = await execFileAsync('git', args, { cwd, timeout: 60000 });
     return stdout.trim();
   };
 
   try {
-    // Stash if requested
-    if (opts.stashFirst) {
-      try {
-        const status = await runGit(['status', '--porcelain'], opts.repoPath);
-        if (status) {
-          await runGit(['stash'], opts.repoPath);
-        }
-      } catch (err) {
-        // Stash failure is non-fatal
-        console.warn(`[Forge] Warning: Could not stash changes in ${opts.repoPath}`);
-      }
+    const cloneSource = opts.remoteUrl ?? opts.localPath;
+    const cloneArgs = ['clone'];
+
+    if (opts.remoteUrl) {
+      // Reference local clone for speed; fetch from remote for freshness
+      cloneArgs.push('--reference', opts.localPath);
     }
 
-    // Try to create worktree with new branch
+    cloneArgs.push(cloneSource, opts.destPath);
+    await runGit(cloneArgs, path.dirname(opts.destPath));
+
+    // Create feature branch from origin/<defaultBranch>
+    const base = opts.remoteUrl
+      ? `origin/${opts.defaultBranch}`
+      : opts.defaultBranch;
+
     try {
-      await runGit(
-        ['worktree', 'add', opts.worktreePath, '-b', opts.branchName],
-        opts.repoPath,
-      );
+      await runGit(['checkout', '-b', opts.branchName, base], opts.destPath);
     } catch (err: any) {
-      const errMsg = err.message || '';
-      // If branch already exists, try without -b
-      if (errMsg.includes('already exists')) {
-        await runGit(['worktree', 'add', opts.worktreePath, opts.branchName], opts.repoPath);
+      // Branch already exists — check it out instead
+      if ((err.message || '').includes('already exists')) {
+        await runGit(['checkout', opts.branchName], opts.destPath);
       } else {
         throw err;
       }
     }
   } catch (err: any) {
     throw new WorkspaceCreateError(
-      `Failed to create git worktree at ${opts.worktreePath}: ${err.message}`,
-      'Check that the repo path is valid and accessible',
+      `Failed to create reference clone at ${opts.destPath}: ${err.message}`,
+      'Check that the remote URL is accessible and the local repo path is valid',
     );
   }
 }
@@ -195,7 +197,7 @@ export class WorkspaceCreator {
     }
 
     try {
-      // Step 6: Create git worktrees for each repo
+      // Step 6: Create reference clones for each repo
       const reposWithWorktrees: WorkspaceRepo[] = [];
       for (const repo of resolvedRepos) {
         const branchName = generateBranchName(
@@ -207,26 +209,26 @@ export class WorkspaceCreator {
           },
         );
 
-        const worktreePath = path.join(workspacePath, repo.name);
+        const clonePath = path.join(workspacePath, repo.name);
 
         try {
-          await createGitWorktree({
-            repoPath: repo.localPath,
-            worktreePath,
+          await createReferenceClone({
+            localPath: repo.localPath,
+            remoteUrl: repo.remoteUrl,
+            destPath: clonePath,
             branchName,
-            baseBranch: workspaceConfigMeta.git_workflow.base_branch,
-            stashFirst: workspaceConfigMeta.git_workflow.stash_before_checkout,
+            defaultBranch: repo.defaultBranch,
           });
 
           reposWithWorktrees.push({
             name: repo.name,
             localPath: repo.localPath,
             branch: branchName,
-            worktreePath,
+            worktreePath: clonePath,
           });
         } catch (err: any) {
-          // Graceful fallback: log warning but continue without worktree
-          console.warn(`[Forge] Warning: Could not create worktree for ${repo.name}: ${err.message}`);
+          // Graceful fallback: log warning but continue without clone
+          console.warn(`[Forge] Warning: Could not create reference clone for ${repo.name}: ${err.message}`);
           reposWithWorktrees.push({
             name: repo.name,
             localPath: repo.localPath,
@@ -329,7 +331,20 @@ export class WorkspaceCreator {
       }
 
       // Step 9: Emit environment variables file
-      const envVars = {
+      // Resolve workflow metadata for the first repo (drives PR strategy in scripts)
+      let workflowStrategy = '';
+      let prTarget = '';
+      if (resolvedRepos.length > 0) {
+        try {
+          const repoWorkflow = await this.forge.repoWorkflow(resolvedRepos[0].name);
+          workflowStrategy = repoWorkflow.workflow.strategy;
+          prTarget = repoWorkflow.workflow.prTarget;
+        } catch {
+          // Non-fatal: workflow vars will be empty
+        }
+      }
+
+      const envVars: Record<string, string> = {
         SDLC_BRANCH_PATTERN: workspaceConfigMeta.git_workflow.branch_pattern,
         SDLC_BASE_BRANCH: workspaceConfigMeta.git_workflow.base_branch,
         SDLC_COMMIT_FORMAT: workspaceConfigMeta.git_workflow.commit_format,
@@ -341,6 +356,9 @@ export class WorkspaceCreator {
         FORGE_WORKSPACE_ID: id,
         FORGE_WORKSPACE_NAME: name,
       };
+
+      if (workflowStrategy) envVars['SDLC_WORKFLOW_STRATEGY'] = workflowStrategy;
+      if (prTarget) envVars['SDLC_PR_TARGET'] = prTarget;
 
       const envContent = Object.entries(envVars)
         .map(([k, v]) => `${k}=${v}`)
