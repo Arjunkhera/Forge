@@ -34,4 +34,12 @@ export interface DataAdapter {
    * Creates directories as needed.
    */
   write(type: ArtifactType, id: string, bundle: ArtifactBundle): Promise<void>;
+
+  /**
+   * Read a resource file from an artifact's directory by relative path.
+   * Used for plugin resource files (e.g., resources/rules/global-rules.md).
+   * Returns null if the file doesn't exist.
+   * Optional — not all adapters support this.
+   */
+  readResourceFile?(type: ArtifactType, id: string, relativePath: string): Promise<string | null>;
 }

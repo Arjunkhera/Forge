@@ -1,3 +1,5 @@
+import { promises as fs } from 'fs';
+import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -9,6 +11,8 @@ import { Registry } from './registry/registry.js';
 import { Resolver } from './resolver/resolver.js';
 import { Compiler } from './compiler/compiler.js';
 import { ClaudeCodeStrategy } from './compiler/claude-code-strategy.js';
+import { GlobalClaudeCodeStrategy } from './compiler/global-claude-code-strategy.js';
+import { upsertManagedSection, removeManagedSection } from './compiler/claude-md-writer.js';
 import { FilesystemAdapter } from './adapters/filesystem-adapter.js';
 import { CompositeAdapter } from './adapters/composite-adapter.js';
 import { GitAdapter } from './adapters/git-adapter.js';
@@ -23,11 +27,12 @@ import type {
   LockFile,
   WorkspaceRecord,
 } from './models/index.js';
+import type { GlobalPluginEntry } from './models/global-config.js';
 import type { ForgeConfig, RegistryConfig } from './models/forge-config.js';
 import type { RepoIndex, RepoIndexEntry } from './models/repo-index.js';
 import type { RepoWorkflow, WorkflowStrategy } from './models/repo-workflow.js';
 import { ForgeError } from './adapters/errors.js';
-import { loadGlobalConfig } from './config/global-config-loader.js';
+import { loadGlobalConfig, saveGlobalConfig } from './config/global-config-loader.js';
 import { scan as repoScannerScan } from './repo/repo-scanner.js';
 import { loadRepoIndex, saveRepoIndex } from './repo/repo-index-store.js';
 import { RepoIndexQuery } from './repo/repo-index-query.js';
@@ -39,6 +44,26 @@ export interface InstallOptions {
   target?: ForgeConfig['target'];
   conflictStrategy?: 'overwrite' | 'skip' | 'backup';
   dryRun?: boolean;
+}
+
+/**
+ * Report returned after a global plugin install.
+ */
+export interface GlobalInstallReport {
+  pluginId: string;
+  version: string;
+  filesWritten: string[];
+  claudeMdUpdated: boolean;
+}
+
+/**
+ * Info about a globally installed plugin.
+ */
+export interface GlobalPluginInfo {
+  id: string;
+  version: string;
+  installedAt: string;
+  files: string[];
 }
 
 /**
@@ -463,6 +488,173 @@ export class ForgeCore {
     const globalConfig = await loadGlobalConfig(this.globalConfigPath);
     const retentionDays = globalConfig.workspace.retention_days;
     return this.lifecycleManager.clean(retentionDays, opts);
+  }
+
+  // ─── Global Plugin Management ───
+
+  /**
+   * Install a plugin globally to ~/.claude/.
+   *
+   * 1. Resolves the plugin via the registry
+   * 2. Emits skills to ~/.claude/skills/ using GlobalClaudeCodeStrategy
+   * 3. Reads plugin's resources/rules/global-rules.md
+   * 4. Upserts a managed section in ~/.claude/CLAUDE.md
+   * 5. Tracks installed files in ~/.forge/config.yaml global_plugins
+   */
+  async installGlobal(ref: string): Promise<GlobalInstallReport> {
+    const parsed = this.parseRef(ref);
+    if (parsed.type !== 'plugin') {
+      throw new ForgeError('INVALID_REF', `Global install only supports plugins, got '${parsed.type}'`, 'Use format: plugin:my-plugin@1.0.0');
+    }
+
+    const registry = await this.buildRegistry();
+    const resolver = new Resolver(registry);
+    resolver.reset();
+    const resolved = await resolver.resolve(parsed);
+
+    // Emit skills/agents to ~/.claude/ using global strategy
+    const claudeDir = path.join(os.homedir(), '.claude');
+    const globalStrategy = new GlobalClaudeCodeStrategy(claudeDir);
+    const output = globalStrategy.emit(resolved);
+    const filesWritten: string[] = [];
+
+    for (const op of output.operations) {
+      const dir = path.dirname(op.path);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(op.path, op.content, 'utf-8');
+      filesWritten.push(op.path);
+    }
+
+    // Read plugin's global-rules.md resource file
+    let claudeMdUpdated = false;
+    const adapter = await this.findAdapterWithResource(registry, parsed);
+    if (adapter) {
+      const rulesContent = await adapter.readResourceFile!('plugin', parsed.id, 'resources/rules/global-rules.md');
+      if (rulesContent) {
+        const claudeMdPath = path.join(claudeDir, 'CLAUDE.md');
+        let existing: string | undefined;
+        try {
+          existing = await fs.readFile(claudeMdPath, 'utf-8');
+        } catch (err: any) {
+          if (err.code !== 'ENOENT') throw err;
+        }
+
+        const updated = upsertManagedSection(existing, parsed.id, rulesContent);
+        await fs.mkdir(claudeDir, { recursive: true });
+        await fs.writeFile(claudeMdPath, updated, 'utf-8');
+        claudeMdUpdated = true;
+      }
+    }
+
+    // Track in global config
+    const globalConfig = await loadGlobalConfig(this.globalConfigPath);
+    globalConfig.global_plugins[parsed.id] = {
+      version: resolved.bundle.meta.version,
+      installed_at: new Date().toISOString(),
+      files: filesWritten,
+    };
+    await saveGlobalConfig(globalConfig, this.globalConfigPath);
+
+    return {
+      pluginId: parsed.id,
+      version: resolved.bundle.meta.version,
+      filesWritten,
+      claudeMdUpdated,
+    };
+  }
+
+  /**
+   * Uninstall a globally installed plugin.
+   *
+   * 1. Reads tracked files from global_plugins
+   * 2. Deletes skill/agent files from ~/.claude/
+   * 3. Removes managed section from ~/.claude/CLAUDE.md
+   * 4. Removes entry from global config
+   */
+  async uninstallGlobal(pluginId: string): Promise<void> {
+    const globalConfig = await loadGlobalConfig(this.globalConfigPath);
+    const entry = globalConfig.global_plugins[pluginId];
+
+    if (!entry) {
+      throw new ForgeError('NOT_FOUND', `Plugin '${pluginId}' is not globally installed`, 'Run: forge global list');
+    }
+
+    // Delete tracked files
+    for (const filePath of entry.files) {
+      try {
+        await fs.unlink(filePath);
+        // Try to remove empty parent directories
+        const dir = path.dirname(filePath);
+        try {
+          await fs.rmdir(dir);
+        } catch {
+          // Directory not empty — fine
+        }
+      } catch (err: any) {
+        if (err.code !== 'ENOENT') {
+          console.warn(`[ForgeCore] Could not delete ${filePath}: ${err.message}`);
+        }
+      }
+    }
+
+    // Remove managed section from CLAUDE.md
+    const claudeMdPath = path.join(os.homedir(), '.claude', 'CLAUDE.md');
+    try {
+      const existing = await fs.readFile(claudeMdPath, 'utf-8');
+      const updated = removeManagedSection(existing, pluginId);
+      await fs.writeFile(claudeMdPath, updated, 'utf-8');
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') {
+        console.warn(`[ForgeCore] Could not update CLAUDE.md: ${err.message}`);
+      }
+    }
+
+    // Remove from global config
+    delete globalConfig.global_plugins[pluginId];
+    await saveGlobalConfig(globalConfig, this.globalConfigPath);
+  }
+
+  /**
+   * List all globally installed plugins.
+   */
+  async listGlobal(): Promise<GlobalPluginInfo[]> {
+    const globalConfig = await loadGlobalConfig(this.globalConfigPath);
+    return Object.entries(globalConfig.global_plugins).map(([id, entry]) => ({
+      id,
+      version: entry.version,
+      installedAt: entry.installed_at,
+      files: entry.files,
+    }));
+  }
+
+  /**
+   * Find an adapter in the registry that supports readResourceFile for a given artifact.
+   */
+  private async findAdapterWithResource(registry: Registry, ref: ArtifactRef): Promise<DataAdapter | null> {
+    // Build adapters directly to access readResourceFile
+    let config: ForgeConfig | null = null;
+    try {
+      config = await this.workspaceManager.readConfig();
+    } catch {
+      // No workspace config
+    }
+    const globalConfig = await loadGlobalConfig(this.globalConfigPath);
+
+    const registries = config
+      ? [...config.registries, ...globalConfig.registries.filter(r => !config!.registries.some(cr => cr.name === r.name))]
+      : globalConfig.registries;
+
+    for (const reg of registries) {
+      try {
+        const adapter = this.buildAdapter(reg);
+        if (adapter.readResourceFile && await adapter.exists(ref.type, ref.id)) {
+          return adapter;
+        }
+      } catch {
+        // Skip failed adapters
+      }
+    }
+    return null;
   }
 
   // Internal helpers

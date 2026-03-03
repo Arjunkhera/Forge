@@ -33,11 +33,13 @@ export {
 // Global Config
 export {
   GlobalConfigSchema,
+  GlobalPluginEntrySchema,
   WorkspaceSettingsSchema,
   McpEndpointSchema,
   McpEndpointsSchema,
   ReposConfigSchema,
   type GlobalConfig,
+  type GlobalPluginEntry,
   type WorkspaceSettings,
   type McpEndpoint,
   type McpEndpoints,

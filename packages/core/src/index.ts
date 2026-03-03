@@ -1,5 +1,5 @@
 // Core
-export { ForgeCore, type InstallOptions } from './core.js';
+export { ForgeCore, type InstallOptions, type GlobalInstallReport, type GlobalPluginInfo } from './core.js';
 export { Registry } from './registry/registry.js';
 
 // Models

@@ -103,12 +103,24 @@ export type ReposConfig = z.infer<typeof ReposConfigSchema>;
  *     - ~/Repositories
  *   index_path: ~/.forge/repos.json
  */
+/**
+ * Tracks a globally installed plugin.
+ */
+export const GlobalPluginEntrySchema = z.object({
+  version: z.string(),
+  installed_at: z.string(),
+  files: z.array(z.string()).default([]),
+});
+
+export type GlobalPluginEntry = z.infer<typeof GlobalPluginEntrySchema>;
+
 export const GlobalConfigSchema = z.object({
   registries: z.array(RegistryConfigSchema).default([]),
   workspace: WorkspaceSettingsSchema.default({}),
   mcp_endpoints: McpEndpointsSchema.default({}),
   host_endpoints: HostEndpointsSchema.optional(),
   repos: ReposConfigSchema.default({}),
+  global_plugins: z.record(z.string(), GlobalPluginEntrySchema).default({}),
 });
 
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
