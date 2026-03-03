@@ -141,7 +141,14 @@ if [ -d "${REGISTRY_PATH}/.git" ]; then
   log "Registry pull daemon started (PID: $PULL_PID)"
 fi
 
-# Step 7: Start the Forge MCP server in HTTP mode
+# Step 7: Install horus-core plugin globally
+log "Installing horus-core plugin globally..."
+node /app/packages/cli/dist/index.js global install plugin:horus-core 2>&1 || {
+  log_err "horus-core global install failed (non-fatal, continuing)"
+}
+log "horus-core plugin installed"
+
+# Step 8: Start the Forge MCP server in HTTP mode
 log "Starting Forge MCP server in HTTP mode on ${FORGE_HOST}:${FORGE_PORT}..."
 
 node /app/packages/cli/dist/index.js serve \

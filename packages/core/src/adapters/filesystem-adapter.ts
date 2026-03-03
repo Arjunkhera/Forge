@@ -168,4 +168,14 @@ export class FilesystemAdapter implements DataAdapter {
       await fs.writeFile(contentPath, bundle.content, 'utf-8');
     }
   }
+
+  async readResourceFile(type: ArtifactType, id: string, relativePath: string): Promise<string | null> {
+    const filePath = path.join(this.artifactDir(type, id), relativePath);
+    try {
+      return await fs.readFile(filePath, 'utf-8');
+    } catch (err: any) {
+      if (err.code === 'ENOENT') return null;
+      throw err;
+    }
+  }
 }
