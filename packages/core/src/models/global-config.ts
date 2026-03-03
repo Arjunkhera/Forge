@@ -28,6 +28,7 @@ export type McpEndpoint = z.infer<typeof McpEndpointSchema>;
 export const McpEndpointsSchema = z.object({
   anvil: McpEndpointSchema.optional(),
   vault: McpEndpointSchema.optional(),
+  forge: McpEndpointSchema.optional(),
 });
 
 export type McpEndpoints = z.infer<typeof McpEndpointsSchema>;

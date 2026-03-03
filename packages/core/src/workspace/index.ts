@@ -12,3 +12,9 @@ export {
   type WorkspaceCreateOptions,
 } from './workspace-creator.js';
 export { WorkspaceLifecycleManager } from './workspace-lifecycle.js';
+export {
+  emitMcpRemoteWrapper,
+  updateClaudeMcpServers,
+  WRAPPER_PATH,
+  type McpServerEntry,
+} from './mcp-settings-writer.js';
