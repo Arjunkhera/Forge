@@ -33,6 +33,14 @@ const errors_js_1 = require("../../adapters/errors.js");
         }));
         await fs_1.promises.writeFile(path_1.default.join(dir, 'SKILL.md'), `# ${id}`);
     }
+    async function createPlugin(id, skills = [], agents = []) {
+        const dir = path_1.default.join(tmpDir, 'plugins', id);
+        await fs_1.promises.mkdir(dir, { recursive: true });
+        await fs_1.promises.writeFile(path_1.default.join(dir, 'metadata.yaml'), (0, yaml_1.stringify)({
+            id, name: `Plugin ${id}`, version: '1.0.0',
+            description: `The ${id} plugin`, type: 'plugin', skills, agents,
+        }));
+    }
     (0, vitest_1.describe)('resolve() — basic cases', () => {
         (0, vitest_1.it)('resolves an artifact with no dependencies', async () => {
             await createSkill('developer');
@@ -144,6 +152,58 @@ const errors_js_1 = require("../../adapters/errors.js");
                 { type: 'skill', id: 'shared', version: '1.0.0' },
             ]);
             (0, vitest_1.expect)(results).toHaveLength(1);
+        });
+    });
+    (0, vitest_1.describe)('resolve() — plugin skill extraction', () => {
+        (0, vitest_1.it)('resolves skills listed in a plugin as dependencies', async () => {
+            await createSkill('developer');
+            await createSkill('tester');
+            await createPlugin('my-plugin', ['developer', 'tester']);
+            resolver.reset();
+            const result = await resolver.resolve({ type: 'plugin', id: 'my-plugin', version: '*' });
+            const depIds = result.dependencies.map(d => d.ref.id);
+            (0, vitest_1.expect)(depIds).toContain('developer');
+            (0, vitest_1.expect)(depIds).toContain('tester');
+        });
+        (0, vitest_1.it)('includes plugin skills in resolveAll output', async () => {
+            await createSkill('developer');
+            await createSkill('tester');
+            await createPlugin('my-plugin', ['developer', 'tester']);
+            resolver.reset();
+            const results = await resolver.resolveAll([
+                { type: 'plugin', id: 'my-plugin', version: '*' },
+            ]);
+            const ids = results.map(r => r.ref.id);
+            (0, vitest_1.expect)(ids).toContain('developer');
+            (0, vitest_1.expect)(ids).toContain('tester');
+            (0, vitest_1.expect)(ids).toContain('my-plugin');
+        });
+        (0, vitest_1.it)('resolves plugin skills before the plugin itself', async () => {
+            await createSkill('developer');
+            await createPlugin('my-plugin', ['developer']);
+            resolver.reset();
+            const results = await resolver.resolveAll([
+                { type: 'plugin', id: 'my-plugin', version: '*' },
+            ]);
+            const ids = results.map(r => r.ref.id);
+            (0, vitest_1.expect)(ids.indexOf('developer')).toBeLessThan(ids.indexOf('my-plugin'));
+        });
+        (0, vitest_1.it)('deduplicates skills shared between plugin and direct refs', async () => {
+            await createSkill('developer');
+            await createPlugin('my-plugin', ['developer']);
+            resolver.reset();
+            const results = await resolver.resolveAll([
+                { type: 'plugin', id: 'my-plugin', version: '*' },
+                { type: 'skill', id: 'developer', version: '*' },
+            ]);
+            const developerEntries = results.filter(r => r.ref.id === 'developer');
+            (0, vitest_1.expect)(developerEntries).toHaveLength(1);
+        });
+        (0, vitest_1.it)('handles plugin with no skills gracefully', async () => {
+            await createPlugin('empty-plugin', []);
+            resolver.reset();
+            const result = await resolver.resolve({ type: 'plugin', id: 'empty-plugin', version: '*' });
+            (0, vitest_1.expect)(result.dependencies).toHaveLength(0);
         });
     });
 });

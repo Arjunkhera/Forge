@@ -14,6 +14,13 @@ GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 PULL_PID=""
 NODE_PID=""
 
+# Host-facing values — set these when Forge runs in Docker so workspace creator
+# can emit correct absolute paths into .claude/settings.local.json for Claude Code on the host.
+FORGE_HOST_WORKSPACES_PATH="${FORGE_HOST_WORKSPACES_PATH:-}"
+FORGE_HOST_ANVIL_URL="${FORGE_HOST_ANVIL_URL:-}"
+FORGE_HOST_VAULT_URL="${FORGE_HOST_VAULT_URL:-}"
+FORGE_HOST_FORGE_URL="${FORGE_HOST_FORGE_URL:-}"
+
 log() {
   echo "{\"level\":\"info\",\"message\":\"$1\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >&2
 }
@@ -44,6 +51,25 @@ mkdir -p "${CONFIG_DIR}"
 # Step 2: Write ~/.forge/config.yaml from environment variables.
 # This runs every startup so env var overrides always win (CLI > env > config > defaults).
 log "Writing Forge global config to ${CONFIG_DIR}/config.yaml..."
+
+# Build optional host_endpoints block only when env vars are provided
+HOST_ENDPOINTS_BLOCK=""
+if [ -n "$FORGE_HOST_ANVIL_URL" ] || [ -n "$FORGE_HOST_VAULT_URL" ] || [ -n "$FORGE_HOST_FORGE_URL" ]; then
+  HOST_ENDPOINTS_BLOCK="
+host_endpoints:"
+  [ -n "$FORGE_HOST_ANVIL_URL" ]  && HOST_ENDPOINTS_BLOCK="${HOST_ENDPOINTS_BLOCK}
+  anvil: ${FORGE_HOST_ANVIL_URL}"
+  [ -n "$FORGE_HOST_VAULT_URL" ]  && HOST_ENDPOINTS_BLOCK="${HOST_ENDPOINTS_BLOCK}
+  vault: ${FORGE_HOST_VAULT_URL}"
+  [ -n "$FORGE_HOST_FORGE_URL" ]  && HOST_ENDPOINTS_BLOCK="${HOST_ENDPOINTS_BLOCK}
+  forge: ${FORGE_HOST_FORGE_URL}"
+fi
+
+# Build optional host_workspaces_path line
+HOST_WORKSPACES_LINE=""
+[ -n "$FORGE_HOST_WORKSPACES_PATH" ] && HOST_WORKSPACES_LINE="
+  host_workspaces_path: ${FORGE_HOST_WORKSPACES_PATH}"
+
 cat > "${CONFIG_DIR}/config.yaml" << EOF
 registries:
   - type: filesystem
@@ -53,7 +79,7 @@ registries:
 workspace:
   mount_path: ${WORKSPACES_PATH}
   default_config: sdlc-default
-  retention_days: 30
+  retention_days: 30${HOST_WORKSPACES_LINE}
 
 mcp_endpoints:
   anvil:
@@ -62,7 +88,7 @@ mcp_endpoints:
   vault:
     url: ${VAULT_URL}
     transport: http
-
+${HOST_ENDPOINTS_BLOCK}
 repos:
   scan_paths: []
   index_path: ${CONFIG_DIR}/repos.json

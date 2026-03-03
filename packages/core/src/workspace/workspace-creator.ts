@@ -300,20 +300,32 @@ export class WorkspaceCreator {
         }
       }
 
-      // Step 8a: Register MCP servers in ~/.claude/settings.json using the managed wrapper.
-      // Ensures mcp-remote processes self-terminate when claude exits (fixes process leak).
+      // Step 8a: Register MCP servers in {workspace}/.claude/settings.local.json using the
+      // managed wrapper script. Ensures mcp-remote processes self-terminate when claude exits
+      // (fixes process leak). Uses host_endpoints URLs so Claude Code on the host can connect.
       try {
         const mcpServersToRegister: McpServerEntry[] = [];
         for (const [serverName] of Object.entries(workspaceConfigMeta.mcp_servers)) {
+          // Prefer host_endpoints (correct for Docker) over mcp_endpoints (container-internal).
+          const hostEndpoint =
+            globalConfig.host_endpoints?.[serverName as keyof typeof globalConfig.host_endpoints];
           const endpoint =
             globalConfig.mcp_endpoints[serverName as keyof typeof globalConfig.mcp_endpoints];
-          if (endpoint) {
-            mcpServersToRegister.push({ name: serverName, url: endpoint.url });
+          const url = hostEndpoint ?? endpoint?.url;
+          if (url) {
+            mcpServersToRegister.push({ name: serverName, url });
           }
         }
-        await updateClaudeMcpServers(mcpServersToRegister);
+        // Compute host-side workspace path for absolute command references in settings.json.
+        // When Forge runs in Docker, host_workspaces_path translates the bind-mount root;
+        // for native installs both paths are identical.
+        const hostMountPath = globalConfig.workspace.host_workspaces_path
+          ? globalConfig.workspace.host_workspaces_path
+          : mountPath;
+        const hostWorkspacePath = path.join(hostMountPath, name);
+        await updateClaudeMcpServers(mcpServersToRegister, workspacePath, hostWorkspacePath);
       } catch (err: any) {
-        console.warn(`[Forge] Warning: Could not update ~/.claude/settings.json: ${err.message}`);
+        console.warn(`[Forge] Warning: Could not update .claude/settings.local.json: ${err.message}`);
       }
 
       // Step 9: Emit environment variables file

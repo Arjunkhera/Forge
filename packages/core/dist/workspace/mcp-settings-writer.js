@@ -1,6 +1,13 @@
-import { promises as fs } from 'fs';
-import path from 'path';
-
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.WRAPPER_PATH = void 0;
+exports.emitMcpRemoteWrapper = emitMcpRemoteWrapper;
+exports.updateClaudeMcpServers = updateClaudeMcpServers;
+const fs_1 = require("fs");
+const path_1 = __importDefault(require("path"));
 /**
  * The mcp-remote wrapper script content.
  *
@@ -39,28 +46,18 @@ else
   exec npx --yes mcp-remote "\$@"
 fi
 `;
-
-/**
- * Describes an MCP server to register in .claude/settings.local.json.
- */
-export interface McpServerEntry {
-  name: string;
-  url: string;
-}
-
 /**
  * Emit the mcp-remote wrapper script to {workspacePath}/.claude/bin/mcp-remote-wrapper.
  * Idempotent — safe to call on every workspace creation.
  * Returns the path to the wrapper (Docker-internal path).
  */
-export async function emitMcpRemoteWrapper(workspacePath: string): Promise<string> {
-  const binDir = path.join(workspacePath, '.claude', 'bin');
-  const wrapperPath = path.join(binDir, 'mcp-remote-wrapper');
-  await fs.mkdir(binDir, { recursive: true });
-  await fs.writeFile(wrapperPath, WRAPPER_SCRIPT, { mode: 0o755, encoding: 'utf-8' });
-  return wrapperPath;
+async function emitMcpRemoteWrapper(workspacePath) {
+    const binDir = path_1.default.join(workspacePath, '.claude', 'bin');
+    const wrapperPath = path_1.default.join(binDir, 'mcp-remote-wrapper');
+    await fs_1.promises.mkdir(binDir, { recursive: true });
+    await fs_1.promises.writeFile(wrapperPath, WRAPPER_SCRIPT, { mode: 0o755, encoding: 'utf-8' });
+    return wrapperPath;
 }
-
 /**
  * Merge the given MCP server entries into {workspacePath}/.claude/settings.local.json
  * using the managed wrapper script. Preserves all existing settings.
@@ -75,50 +72,38 @@ export async function emitMcpRemoteWrapper(workspacePath: string): Promise<strin
  * Each entry produces a mcpServers record like:
  *   "anvil": { "command": "/host/path/.claude/bin/mcp-remote-wrapper", "args": ["http://localhost:8100", "--transport", "http"] }
  */
-export async function updateClaudeMcpServers(
-  servers: McpServerEntry[],
-  workspacePath: string,
-  hostWorkspacePath: string,
-): Promise<void> {
-  if (servers.length === 0) return;
-
-  // Write wrapper script to workspace (Docker-internal path)
-  await emitMcpRemoteWrapper(workspacePath);
-
-  // The command path in settings must be the HOST-side absolute path
-  const hostWrapperPath = path.join(hostWorkspacePath, '.claude', 'bin', 'mcp-remote-wrapper');
-
-  const settingsPath = path.join(workspacePath, '.claude', 'settings.local.json');
-
-  // Read existing settings, defaulting to empty object on missing/invalid file.
-  let settings: Record<string, unknown> = {};
-  try {
-    const raw = await fs.readFile(settingsPath, 'utf-8');
-    settings = JSON.parse(raw);
-  } catch {
-    // File absent or unparseable — start fresh.
-  }
-
-  // Merge: add/overwrite only the servers Forge knows about; leave others intact.
-  const mcpServers = (settings.mcpServers as Record<string, unknown>) ?? {};
-  for (const { name, url } of servers) {
-    mcpServers[name] = {
-      command: hostWrapperPath,
-      args: [url, '--transport', 'http'],
-    };
-  }
-  settings.mcpServers = mcpServers;
-
-  await fs.mkdir(path.dirname(settingsPath), { recursive: true });
-  await fs.writeFile(
-    settingsPath,
-    JSON.stringify(settings, null, 2) + '\n',
-    'utf-8',
-  );
+async function updateClaudeMcpServers(servers, workspacePath, hostWorkspacePath) {
+    if (servers.length === 0)
+        return;
+    // Write wrapper script to workspace (Docker-internal path)
+    await emitMcpRemoteWrapper(workspacePath);
+    // The command path in settings must be the HOST-side absolute path
+    const hostWrapperPath = path_1.default.join(hostWorkspacePath, '.claude', 'bin', 'mcp-remote-wrapper');
+    const settingsPath = path_1.default.join(workspacePath, '.claude', 'settings.local.json');
+    // Read existing settings, defaulting to empty object on missing/invalid file.
+    let settings = {};
+    try {
+        const raw = await fs_1.promises.readFile(settingsPath, 'utf-8');
+        settings = JSON.parse(raw);
+    }
+    catch {
+        // File absent or unparseable — start fresh.
+    }
+    // Merge: add/overwrite only the servers Forge knows about; leave others intact.
+    const mcpServers = settings.mcpServers ?? {};
+    for (const { name, url } of servers) {
+        mcpServers[name] = {
+            command: hostWrapperPath,
+            args: [url, '--transport', 'http'],
+        };
+    }
+    settings.mcpServers = mcpServers;
+    await fs_1.promises.mkdir(path_1.default.dirname(settingsPath), { recursive: true });
+    await fs_1.promises.writeFile(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
 }
-
 /**
  * @deprecated Use updateClaudeMcpServers with explicit workspacePath and hostWorkspacePath.
  * Retained as a no-op shim to avoid breaking any code that imports WRAPPER_PATH.
  */
-export const WRAPPER_PATH = '';
+exports.WRAPPER_PATH = '';
+//# sourceMappingURL=mcp-settings-writer.js.map

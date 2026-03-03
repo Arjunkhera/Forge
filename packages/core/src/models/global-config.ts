@@ -8,6 +8,14 @@ export const WorkspaceSettingsSchema = z.object({
   mount_path: z.string().default('~/forge-workspaces'),
   default_config: z.string().default('sdlc-default'),
   retention_days: z.number().default(30),
+  /**
+   * Host-side absolute path for the workspaces directory.
+   * Only needed when Forge runs inside Docker and the workspaces volume is
+   * bind-mounted from the host (e.g., ${HORUS_DATA_PATH}/workspaces).
+   * Used to emit correct absolute paths into .claude/settings.local.json
+   * so Claude Code on the host can resolve the wrapper script and URLs.
+   */
+  host_workspaces_path: z.string().optional(),
 });
 
 export type WorkspaceSettings = z.infer<typeof WorkspaceSettingsSchema>;
@@ -32,6 +40,21 @@ export const McpEndpointsSchema = z.object({
 });
 
 export type McpEndpoints = z.infer<typeof McpEndpointsSchema>;
+
+/**
+ * Host-facing MCP endpoints — the URLs Claude Code on the host machine uses
+ * to reach MCP servers. Separate from mcp_endpoints (which holds container-
+ * internal URLs when Forge runs in Docker).
+ *
+ * Set via FORGE_HOST_*_URL environment variables in docker-compose.
+ */
+export const HostEndpointsSchema = z.object({
+  anvil: z.string().url().optional(),
+  vault: z.string().url().optional(),
+  forge: z.string().url().optional(),
+});
+
+export type HostEndpoints = z.infer<typeof HostEndpointsSchema>;
 
 /**
  * Repository configuration section.
@@ -63,25 +86,28 @@ export type ReposConfig = z.infer<typeof ReposConfigSchema>;
  *   mount_path: ~/workspaces
  *   default_config: sdlc-default
  *   retention_days: 30
+ *   host_workspaces_path: /Users/me/horus-data/workspaces  # host-side path (Docker only)
  *
  * mcp_endpoints:
  *   anvil:
- *     url: http://localhost:3002
+ *     url: http://anvil:8100   # container-internal
  *     transport: http
- *   vault:
- *     url: http://localhost:8000
- *     transport: http
+ *
+ * host_endpoints:              # host-facing ports (Docker only)
+ *   anvil: http://localhost:8100
+ *   vault: http://localhost:8300
+ *   forge: http://localhost:8200
  *
  * repos:
  *   scan_paths:
  *     - ~/Repositories
- *     - ~/Projects
  *   index_path: ~/.forge/repos.json
  */
 export const GlobalConfigSchema = z.object({
   registries: z.array(RegistryConfigSchema).default([]),
   workspace: WorkspaceSettingsSchema.default({}),
   mcp_endpoints: McpEndpointsSchema.default({}),
+  host_endpoints: HostEndpointsSchema.optional(),
   repos: ReposConfigSchema.default({}),
 });
 
