@@ -21,6 +21,9 @@ FORGE_HOST_ANVIL_URL="${FORGE_HOST_ANVIL_URL:-}"
 FORGE_HOST_VAULT_URL="${FORGE_HOST_VAULT_URL:-}"
 FORGE_HOST_FORGE_URL="${FORGE_HOST_FORGE_URL:-}"
 
+# Colon-separated list of paths to scan for git repos, e.g. /data/repos:/data/extra
+FORGE_SCAN_PATHS="${FORGE_SCAN_PATHS:-}"
+
 log() {
   echo "{\"level\":\"info\",\"message\":\"$1\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >&2
 }
@@ -70,6 +73,17 @@ HOST_WORKSPACES_LINE=""
 [ -n "$FORGE_HOST_WORKSPACES_PATH" ] && HOST_WORKSPACES_LINE="
   host_workspaces_path: ${FORGE_HOST_WORKSPACES_PATH}"
 
+# Build scan_paths YAML value — inline list if paths provided, else empty array
+SCAN_PATHS_YAML="[]"
+if [ -n "$FORGE_SCAN_PATHS" ]; then
+  SCAN_PATHS_YAML=""
+  IFS=':' read -ra _scan_paths <<< "$FORGE_SCAN_PATHS"
+  for _p in "${_scan_paths[@]}"; do
+    SCAN_PATHS_YAML="${SCAN_PATHS_YAML}
+    - ${_p}"
+  done
+fi
+
 cat > "${CONFIG_DIR}/config.yaml" << EOF
 registries:
   - type: filesystem
@@ -90,7 +104,7 @@ mcp_endpoints:
     transport: http
 ${HOST_ENDPOINTS_BLOCK}
 repos:
-  scan_paths: []
+  scan_paths: ${SCAN_PATHS_YAML}
   index_path: ${CONFIG_DIR}/repos.json
 EOF
 
