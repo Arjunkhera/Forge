@@ -15,6 +15,7 @@ import { loadGlobalConfig } from '../config/global-config-loader.js';
 import { expandPath } from '../config/path-utils.js';
 import { loadRepoIndex } from '../repo/repo-index-store.js';
 import { RepoIndexQuery } from '../repo/repo-index-query.js';
+import { updateClaudeMcpServers, type McpServerEntry } from './mcp-settings-writer.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -297,6 +298,22 @@ export class WorkspaceCreator {
             'utf-8',
           );
         }
+      }
+
+      // Step 8a: Register MCP servers in ~/.claude/settings.json using the managed wrapper.
+      // Ensures mcp-remote processes self-terminate when claude exits (fixes process leak).
+      try {
+        const mcpServersToRegister: McpServerEntry[] = [];
+        for (const [serverName] of Object.entries(workspaceConfigMeta.mcp_servers)) {
+          const endpoint =
+            globalConfig.mcp_endpoints[serverName as keyof typeof globalConfig.mcp_endpoints];
+          if (endpoint) {
+            mcpServersToRegister.push({ name: serverName, url: endpoint.url });
+          }
+        }
+        await updateClaudeMcpServers(mcpServersToRegister);
+      } catch (err: any) {
+        console.warn(`[Forge] Warning: Could not update ~/.claude/settings.json: ${err.message}`);
       }
 
       // Step 9: Emit environment variables file
