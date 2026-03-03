@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.WorkspaceLifecycleManager = exports.generateBranchName = exports.slugify = exports.WorkspaceCreateError = exports.WorkspaceCreator = exports.WORKSPACES_FILE = exports.generateWorkspaceId = exports.WorkspaceMetadataStore = exports.WorkspaceManager = void 0;
+exports.WRAPPER_PATH = exports.updateClaudeMcpServers = exports.emitMcpRemoteWrapper = exports.WorkspaceLifecycleManager = exports.generateBranchName = exports.slugify = exports.WorkspaceCreateError = exports.WorkspaceCreator = exports.WORKSPACES_FILE = exports.generateWorkspaceId = exports.WorkspaceMetadataStore = exports.WorkspaceManager = void 0;
 var workspace_manager_js_1 = require("./workspace-manager.js");
 Object.defineProperty(exports, "WorkspaceManager", { enumerable: true, get: function () { return workspace_manager_js_1.WorkspaceManager; } });
 var workspace_metadata_store_js_1 = require("./workspace-metadata-store.js");
@@ -14,4 +14,8 @@ Object.defineProperty(exports, "slugify", { enumerable: true, get: function () {
 Object.defineProperty(exports, "generateBranchName", { enumerable: true, get: function () { return workspace_creator_js_1.generateBranchName; } });
 var workspace_lifecycle_js_1 = require("./workspace-lifecycle.js");
 Object.defineProperty(exports, "WorkspaceLifecycleManager", { enumerable: true, get: function () { return workspace_lifecycle_js_1.WorkspaceLifecycleManager; } });
+var mcp_settings_writer_js_1 = require("./mcp-settings-writer.js");
+Object.defineProperty(exports, "emitMcpRemoteWrapper", { enumerable: true, get: function () { return mcp_settings_writer_js_1.emitMcpRemoteWrapper; } });
+Object.defineProperty(exports, "updateClaudeMcpServers", { enumerable: true, get: function () { return mcp_settings_writer_js_1.updateClaudeMcpServers; } });
+Object.defineProperty(exports, "WRAPPER_PATH", { enumerable: true, get: function () { return mcp_settings_writer_js_1.WRAPPER_PATH; } });
 //# sourceMappingURL=index.js.map

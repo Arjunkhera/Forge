@@ -6,14 +6,24 @@ export declare const WorkspaceSettingsSchema: z.ZodObject<{
     mount_path: z.ZodDefault<z.ZodString>;
     default_config: z.ZodDefault<z.ZodString>;
     retention_days: z.ZodDefault<z.ZodNumber>;
+    /**
+     * Host-side absolute path for the workspaces directory.
+     * Only needed when Forge runs inside Docker and the workspaces volume is
+     * bind-mounted from the host (e.g., ${HORUS_DATA_PATH}/workspaces).
+     * Used to emit correct absolute paths into .claude/settings.local.json
+     * so Claude Code on the host can resolve the wrapper script and URLs.
+     */
+    host_workspaces_path: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     retention_days: number;
     mount_path: string;
     default_config: string;
+    host_workspaces_path?: string | undefined;
 }, {
     retention_days?: number | undefined;
     mount_path?: string | undefined;
     default_config?: string | undefined;
+    host_workspaces_path?: string | undefined;
 }>;
 export type WorkspaceSettings = z.infer<typeof WorkspaceSettingsSchema>;
 /**
@@ -54,12 +64,26 @@ export declare const McpEndpointsSchema: z.ZodObject<{
         url: string;
         transport?: "http" | "stdio" | undefined;
     }>>;
+    forge: z.ZodOptional<z.ZodObject<{
+        url: z.ZodString;
+        transport: z.ZodDefault<z.ZodEnum<["http", "stdio"]>>;
+    }, "strip", z.ZodTypeAny, {
+        url: string;
+        transport: "http" | "stdio";
+    }, {
+        url: string;
+        transport?: "http" | "stdio" | undefined;
+    }>>;
 }, "strip", z.ZodTypeAny, {
     anvil?: {
         url: string;
         transport: "http" | "stdio";
     } | undefined;
     vault?: {
+        url: string;
+        transport: "http" | "stdio";
+    } | undefined;
+    forge?: {
         url: string;
         transport: "http" | "stdio";
     } | undefined;
@@ -72,8 +96,33 @@ export declare const McpEndpointsSchema: z.ZodObject<{
         url: string;
         transport?: "http" | "stdio" | undefined;
     } | undefined;
+    forge?: {
+        url: string;
+        transport?: "http" | "stdio" | undefined;
+    } | undefined;
 }>;
 export type McpEndpoints = z.infer<typeof McpEndpointsSchema>;
+/**
+ * Host-facing MCP endpoints — the URLs Claude Code on the host machine uses
+ * to reach MCP servers. Separate from mcp_endpoints (which holds container-
+ * internal URLs when Forge runs in Docker).
+ *
+ * Set via FORGE_HOST_*_URL environment variables in docker-compose.
+ */
+export declare const HostEndpointsSchema: z.ZodObject<{
+    anvil: z.ZodOptional<z.ZodString>;
+    vault: z.ZodOptional<z.ZodString>;
+    forge: z.ZodOptional<z.ZodString>;
+}, "strip", z.ZodTypeAny, {
+    anvil?: string | undefined;
+    vault?: string | undefined;
+    forge?: string | undefined;
+}, {
+    anvil?: string | undefined;
+    vault?: string | undefined;
+    forge?: string | undefined;
+}>;
+export type HostEndpoints = z.infer<typeof HostEndpointsSchema>;
 /**
  * Repository configuration section.
  */
@@ -108,19 +157,21 @@ export type ReposConfig = z.infer<typeof ReposConfigSchema>;
  *   mount_path: ~/workspaces
  *   default_config: sdlc-default
  *   retention_days: 30
+ *   host_workspaces_path: /Users/me/horus-data/workspaces  # host-side path (Docker only)
  *
  * mcp_endpoints:
  *   anvil:
- *     url: http://localhost:3002
+ *     url: http://anvil:8100   # container-internal
  *     transport: http
- *   vault:
- *     url: http://localhost:8000
- *     transport: http
+ *
+ * host_endpoints:              # host-facing ports (Docker only)
+ *   anvil: http://localhost:8100
+ *   vault: http://localhost:8300
+ *   forge: http://localhost:8200
  *
  * repos:
  *   scan_paths:
  *     - ~/Repositories
- *     - ~/Projects
  *   index_path: ~/.forge/repos.json
  */
 export declare const GlobalConfigSchema: z.ZodObject<{
@@ -174,14 +225,24 @@ export declare const GlobalConfigSchema: z.ZodObject<{
         mount_path: z.ZodDefault<z.ZodString>;
         default_config: z.ZodDefault<z.ZodString>;
         retention_days: z.ZodDefault<z.ZodNumber>;
+        /**
+         * Host-side absolute path for the workspaces directory.
+         * Only needed when Forge runs inside Docker and the workspaces volume is
+         * bind-mounted from the host (e.g., ${HORUS_DATA_PATH}/workspaces).
+         * Used to emit correct absolute paths into .claude/settings.local.json
+         * so Claude Code on the host can resolve the wrapper script and URLs.
+         */
+        host_workspaces_path: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
         retention_days: number;
         mount_path: string;
         default_config: string;
+        host_workspaces_path?: string | undefined;
     }, {
         retention_days?: number | undefined;
         mount_path?: string | undefined;
         default_config?: string | undefined;
+        host_workspaces_path?: string | undefined;
     }>>;
     mcp_endpoints: z.ZodDefault<z.ZodObject<{
         anvil: z.ZodOptional<z.ZodObject<{
@@ -204,12 +265,26 @@ export declare const GlobalConfigSchema: z.ZodObject<{
             url: string;
             transport?: "http" | "stdio" | undefined;
         }>>;
+        forge: z.ZodOptional<z.ZodObject<{
+            url: z.ZodString;
+            transport: z.ZodDefault<z.ZodEnum<["http", "stdio"]>>;
+        }, "strip", z.ZodTypeAny, {
+            url: string;
+            transport: "http" | "stdio";
+        }, {
+            url: string;
+            transport?: "http" | "stdio" | undefined;
+        }>>;
     }, "strip", z.ZodTypeAny, {
         anvil?: {
             url: string;
             transport: "http" | "stdio";
         } | undefined;
         vault?: {
+            url: string;
+            transport: "http" | "stdio";
+        } | undefined;
+        forge?: {
             url: string;
             transport: "http" | "stdio";
         } | undefined;
@@ -222,6 +297,23 @@ export declare const GlobalConfigSchema: z.ZodObject<{
             url: string;
             transport?: "http" | "stdio" | undefined;
         } | undefined;
+        forge?: {
+            url: string;
+            transport?: "http" | "stdio" | undefined;
+        } | undefined;
+    }>>;
+    host_endpoints: z.ZodOptional<z.ZodObject<{
+        anvil: z.ZodOptional<z.ZodString>;
+        vault: z.ZodOptional<z.ZodString>;
+        forge: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        anvil?: string | undefined;
+        vault?: string | undefined;
+        forge?: string | undefined;
+    }, {
+        anvil?: string | undefined;
+        vault?: string | undefined;
+        forge?: string | undefined;
     }>>;
     repos: z.ZodDefault<z.ZodObject<{
         scan_paths: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
@@ -254,6 +346,7 @@ export declare const GlobalConfigSchema: z.ZodObject<{
         retention_days: number;
         mount_path: string;
         default_config: string;
+        host_workspaces_path?: string | undefined;
     };
     mcp_endpoints: {
         anvil?: {
@@ -264,11 +357,20 @@ export declare const GlobalConfigSchema: z.ZodObject<{
             url: string;
             transport: "http" | "stdio";
         } | undefined;
+        forge?: {
+            url: string;
+            transport: "http" | "stdio";
+        } | undefined;
     };
     repos: {
         scan_paths: string[];
         index_path: string;
     };
+    host_endpoints?: {
+        anvil?: string | undefined;
+        vault?: string | undefined;
+        forge?: string | undefined;
+    } | undefined;
 }, {
     registries?: ({
         name: string;
@@ -290,6 +392,7 @@ export declare const GlobalConfigSchema: z.ZodObject<{
         retention_days?: number | undefined;
         mount_path?: string | undefined;
         default_config?: string | undefined;
+        host_workspaces_path?: string | undefined;
     } | undefined;
     mcp_endpoints?: {
         anvil?: {
@@ -300,6 +403,15 @@ export declare const GlobalConfigSchema: z.ZodObject<{
             url: string;
             transport?: "http" | "stdio" | undefined;
         } | undefined;
+        forge?: {
+            url: string;
+            transport?: "http" | "stdio" | undefined;
+        } | undefined;
+    } | undefined;
+    host_endpoints?: {
+        anvil?: string | undefined;
+        vault?: string | undefined;
+        forge?: string | undefined;
     } | undefined;
     repos?: {
         scan_paths?: string[] | undefined;

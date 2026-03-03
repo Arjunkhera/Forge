@@ -16,6 +16,7 @@ const global_config_loader_js_1 = require("../config/global-config-loader.js");
 const path_utils_js_1 = require("../config/path-utils.js");
 const repo_index_store_js_1 = require("../repo/repo-index-store.js");
 const repo_index_query_js_1 = require("../repo/repo-index-query.js");
+const mcp_settings_writer_js_1 = require("./mcp-settings-writer.js");
 const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
 /**
  * Custom error type for workspace creation failures.
@@ -196,7 +197,7 @@ class WorkspaceCreator {
                 outputDir: '.',
                 registries: globalConfig.registries,
                 artifacts: {
-                    skills: {},
+                    skills: Object.fromEntries(workspaceConfigMeta.skills.map(s => [s, '*'])),
                     agents: {},
                     plugins: Object.fromEntries(workspaceConfigMeta.plugins.map(p => [p, '*'])),
                     'workspace-configs': {},
@@ -232,6 +233,32 @@ class WorkspaceCreator {
                     };
                     await fs_1.promises.writeFile(path_1.default.join(mcpDir, `${serverName}.json`), JSON.stringify(mcpConfig, null, 2), 'utf-8');
                 }
+            }
+            // Step 8a: Register MCP servers in {workspace}/.claude/settings.local.json using the
+            // managed wrapper script. Ensures mcp-remote processes self-terminate when claude exits
+            // (fixes process leak). Uses host_endpoints URLs so Claude Code on the host can connect.
+            try {
+                const mcpServersToRegister = [];
+                for (const [serverName] of Object.entries(workspaceConfigMeta.mcp_servers)) {
+                    // Prefer host_endpoints (correct for Docker) over mcp_endpoints (container-internal).
+                    const hostEndpoint = globalConfig.host_endpoints?.[serverName];
+                    const endpoint = globalConfig.mcp_endpoints[serverName];
+                    const url = hostEndpoint ?? endpoint?.url;
+                    if (url) {
+                        mcpServersToRegister.push({ name: serverName, url });
+                    }
+                }
+                // Compute host-side workspace path for absolute command references in settings.json.
+                // When Forge runs in Docker, host_workspaces_path translates the bind-mount root;
+                // for native installs both paths are identical.
+                const hostMountPath = globalConfig.workspace.host_workspaces_path
+                    ? globalConfig.workspace.host_workspaces_path
+                    : mountPath;
+                const hostWorkspacePath = path_1.default.join(hostMountPath, name);
+                await (0, mcp_settings_writer_js_1.updateClaudeMcpServers)(mcpServersToRegister, workspacePath, hostWorkspacePath);
+            }
+            catch (err) {
+                console.warn(`[Forge] Warning: Could not update .claude/settings.local.json: ${err.message}`);
             }
             // Step 9: Emit environment variables file
             const envVars = {
