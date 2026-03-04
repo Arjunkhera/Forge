@@ -31,6 +31,9 @@ export async function loadGlobalConfig(
     if (config.workspace.mount_path) {
       config.workspace.mount_path = expandPath(config.workspace.mount_path);
     }
+    if (config.workspace.store_path) {
+      config.workspace.store_path = expandPath(config.workspace.store_path);
+    }
     if (config.repos.index_path) {
       config.repos.index_path = expandPath(config.repos.index_path);
     }

@@ -15,6 +15,13 @@ export const WorkspaceSettingsSchema = z.object({
    * Used to emit correct absolute paths into .claude/settings.local.json
    * so Claude Code on the host can resolve the wrapper script and URLs.
    */
+  /**
+   * Path to the workspace metadata store file (workspaces.json).
+   * Defaults to ~/.forge/workspaces.json (suitable for standalone/host use).
+   * Override to a volume-mounted path when running in Docker so metadata
+   * survives container restarts (e.g., /data/workspaces/workspaces.json).
+   */
+  store_path: z.string().default('~/.forge/workspaces.json'),
   host_workspaces_path: z.string().optional(),
 });
 

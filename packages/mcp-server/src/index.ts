@@ -9,7 +9,6 @@ import {
   type ListToolsRequest,
 } from '@modelcontextprotocol/sdk/types.js';
 import { ForgeCore, type RepoIndexEntry } from '@forge/core';
-import { WorkspaceMetadataStore } from '@forge/core';
 import * as http from 'node:http';
 
 const startTime = Date.now();
@@ -424,32 +423,29 @@ function buildServer(workspaceRoot: string): Server {
 
         case 'forge_workspace_list': {
           const { status, storyId } = (args ?? {}) as { status?: string; storyId?: string };
-          const store = new WorkspaceMetadataStore();
           if (storyId) {
-            const record = await store.findByStoryId(storyId);
+            const record = await forge.workspaceFindByStory(storyId);
             return { content: [{ type: 'text', text: JSON.stringify(record ? [record] : [], null, 2) }] };
           }
-          const records = await store.list(status ? { status: status as any } : undefined);
+          const records = await forge.workspaceList(status ? { status } : undefined);
           return { content: [{ type: 'text', text: JSON.stringify(records, null, 2) }] };
         }
 
         case 'forge_workspace_delete': {
           const { id, force } = args as { id: string; force?: boolean };
-          const store = new WorkspaceMetadataStore();
-          const record = await store.get(id);
+          const record = await forge.workspaceStatus(id);
           if (!record) {
             return {
               content: [{ type: 'text', text: JSON.stringify({ error: true, code: 'WORKSPACE_NOT_FOUND', message: `Workspace '${id}' not found` }, null, 2) }],
             };
           }
-          await store.delete(id);
+          await forge.workspaceDelete(id, { force });
           return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: `Workspace '${id}' deleted` }, null, 2) }] };
         }
 
         case 'forge_workspace_status': {
           const { id } = args as { id: string };
-          const store = new WorkspaceMetadataStore();
-          const record = await store.get(id);
+          const record = await forge.workspaceStatus(id);
           if (!record) {
             return {
               content: [{ type: 'text', text: JSON.stringify({ error: true, code: 'WORKSPACE_NOT_FOUND', message: `Workspace '${id}' not found` }, null, 2) }],
