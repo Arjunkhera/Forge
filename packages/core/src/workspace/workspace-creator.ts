@@ -207,10 +207,6 @@ export class WorkspaceCreator {
         }
         resolvedRepos.push(repo);
       }
-
-      // Translate Docker-internal paths to host-equivalent paths
-      const { scan_paths, host_repos_path } = globalConfig.repos;
-      resolvedRepos = resolvedRepos.map(r => translateRepoPath(r, scan_paths, host_repos_path));
     }
 
     // Step 5: Create workspace folder
@@ -224,6 +220,7 @@ export class WorkspaceCreator {
 
     try {
       // Step 6: Create reference clones for each repo
+      const { scan_paths, host_repos_path } = globalConfig.repos;
       const reposWithWorktrees: WorkspaceRepo[] = [];
       for (const repo of resolvedRepos) {
         const branchName = generateBranchName(
@@ -236,10 +233,12 @@ export class WorkspaceCreator {
         );
 
         const clonePath = path.join(workspacePath, repo.name);
+        // Translate to host path for storage/display; git ops use original Docker-internal path
+        const translatedRepo = translateRepoPath(repo, scan_paths, host_repos_path);
 
         try {
           await createReferenceClone({
-            localPath: repo.localPath,
+            localPath: repo.localPath,   // Docker-internal — accessible from within the container
             remoteUrl: repo.remoteUrl,
             destPath: clonePath,
             branchName,
@@ -248,7 +247,7 @@ export class WorkspaceCreator {
 
           reposWithWorktrees.push({
             name: repo.name,
-            localPath: repo.localPath,
+            localPath: translatedRepo.localPath,  // host path for record/CLAUDE.md
             branch: branchName,
             worktreePath: clonePath,
           });
@@ -257,7 +256,7 @@ export class WorkspaceCreator {
           console.warn(`[Forge] Warning: Could not create reference clone for ${repo.name}: ${err.message}`);
           reposWithWorktrees.push({
             name: repo.name,
-            localPath: repo.localPath,
+            localPath: translatedRepo.localPath,  // host path for record/CLAUDE.md
             branch: branchName,
             worktreePath: null,
           });
