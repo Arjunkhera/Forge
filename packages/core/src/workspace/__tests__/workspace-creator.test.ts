@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
 import {
   WorkspaceCreator,
   WorkspaceCreateError,
+  createReferenceClone,
   slugify,
   generateBranchName,
   type WorkspaceCreateOptions,
@@ -127,6 +128,76 @@ describe('WorkspaceCreator (unit tests with mocks)', () => {
   });
 });
 
+describe('WorkspaceCreator — CLAUDE.md uses worktreePath when clone succeeds', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'forge-claudemd-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('CLAUDE.md path for a repo points inside the workspace, not at the source repo', async () => {
+    // Build a minimal local git repo so createReferenceClone can succeed
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const runGit = promisify(execFile);
+
+    const localRepoDir = path.join(tmpDir, 'repos', 'Anvil');
+    await fs.mkdir(localRepoDir, { recursive: true });
+    await runGit('git', ['init', localRepoDir]);
+    await runGit('git', ['-C', localRepoDir, 'checkout', '-b', 'main']);
+    await fs.writeFile(path.join(localRepoDir, 'README.md'), '# Anvil');
+    await runGit('git', ['-C', localRepoDir, 'add', '.']);
+    await runGit('git', ['-C', localRepoDir, '-c', 'user.name=Test', '-c', 'user.email=t@t.com',
+      'commit', '-m', 'init']);
+
+    const mockForge = {
+      resolve: vi.fn().mockResolvedValue({
+        ref: { version: '1.0.0' },
+        bundle: {
+          meta: {
+            skills: [],
+            plugins: [],
+            mcp_servers: {},
+            git_workflow: {
+              branch_pattern: 'feature/{id}',
+              base_branch: 'main',
+              commit_format: 'conventional',
+              stash_before_checkout: false,
+              pr_template: false,
+              signed_commits: false,
+            },
+          },
+        },
+      }),
+      install: vi.fn().mockResolvedValue(undefined),
+      repoWorkflow: vi.fn().mockRejectedValue(new Error('no workflow')),
+    };
+
+    // Use loadGlobalConfig's actual path resolution but with a custom mount path
+    // by passing mountPath override so the workspace goes into tmpDir
+    const creator = new WorkspaceCreator(mockForge as any);
+    const record = await creator.create({
+      configName: 'sdlc-default',
+      repos: ['Anvil'],
+      storyTitle: 'test story',
+      mountPath: path.join(tmpDir, 'workspaces'),
+    });
+
+    const claudeMdContent = await fs.readFile(path.join(record.path, 'CLAUDE.md'), 'utf-8');
+
+    // The CLAUDE.md should reference the workspace clone, not the source repo
+    // Fix 4: when worktreePath is set, path = hostWorkspacePath/repoName
+    // The workspace clone dir is <workspacePath>/Anvil
+    expect(claudeMdContent).not.toContain(localRepoDir);
+    // Path ends with workspaceName/Anvil
+    expect(claudeMdContent).toContain(`${record.name}/Anvil`);
+  });
+});
+
 describe('reference clone integration', () => {
   let tmpDir: string;
 
@@ -175,6 +246,41 @@ describe('reference clone integration', () => {
     expect(stdout.trim()).toBe('feature/test-branch');
   });
 
+  it('falls back to local clone when remote URL is unreachable', async () => {
+    const localDir = path.join(tmpDir, 'local');
+    const cloneDir = path.join(tmpDir, 'ws', 'myrepo');
+
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const runGit = promisify(execFile);
+
+    // Create a real local git repo with one commit
+    await runGit('git', ['init', localDir]);
+    await runGit('git', ['-C', localDir, 'checkout', '-b', 'main']);
+    await fs.writeFile(path.join(localDir, 'README.md'), '# local');
+    await runGit('git', ['-C', localDir, 'add', '.']);
+    await runGit('git', ['-C', localDir, '-c', 'user.name=Test', '-c', 'user.email=t@t.com',
+      'commit', '-m', 'init']);
+
+    await fs.mkdir(path.join(tmpDir, 'ws'), { recursive: true });
+
+    // Use a bogus/unreachable remote URL
+    await expect(createReferenceClone({
+      localPath: localDir,
+      remoteUrl: 'git@bogus.invalid:x/y.git',
+      destPath: cloneDir,
+      branchName: 'feature/test-fallback',
+      defaultBranch: 'main',
+    })).resolves.toBeUndefined();
+
+    // Verify the clone exists and is on the feature branch
+    const { stdout: branch } = await runGit('git', ['-C', cloneDir, 'branch', '--show-current']);
+    expect(branch.trim()).toBe('feature/test-fallback');
+
+    const readme = await fs.readFile(path.join(cloneDir, 'README.md'), 'utf-8');
+    expect(readme).toBe('# local');
+  });
+
   it('reference clone is independent — changes do not affect local repo', async () => {
     const remoteDir = path.join(tmpDir, 'remote.git');
     const localDir = path.join(tmpDir, 'local');
@@ -204,4 +310,3 @@ describe('reference clone integration', () => {
   });
 });
 
-import { afterEach } from 'vitest';

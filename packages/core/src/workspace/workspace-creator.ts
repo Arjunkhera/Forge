@@ -3,6 +3,7 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import type { ForgeCore } from '../core.js';
+import { translateRepoPath } from '../core.js';
 import type {
   WorkspaceRecord,
   WorkspaceRepo,
@@ -83,9 +84,10 @@ export function generateBranchName(
  *
  * Uses `git clone --reference <localPath>` to reuse local objects for speed
  * while fetching from the remote URL for freshness and full isolation.
- * Falls back to a plain local clone when no remoteUrl is available.
+ * Falls back to a plain local clone when no remoteUrl is available, or when
+ * the remote URL is unreachable (e.g. inside Docker without SSH access).
  */
-async function createReferenceClone(opts: {
+export async function createReferenceClone(opts: {
   localPath: string;     // local clone path — used as --reference for speed
   remoteUrl: string | null; // remote URL to fetch from; null → local-only clone
   destPath: string;      // destination path for the new clone
@@ -97,23 +99,7 @@ async function createReferenceClone(opts: {
     return stdout.trim();
   };
 
-  try {
-    const cloneSource = opts.remoteUrl ?? opts.localPath;
-    const cloneArgs = ['clone'];
-
-    if (opts.remoteUrl) {
-      // Reference local clone for speed; fetch from remote for freshness
-      cloneArgs.push('--reference', opts.localPath);
-    }
-
-    cloneArgs.push(cloneSource, opts.destPath);
-    await runGit(cloneArgs, path.dirname(opts.destPath));
-
-    // Create feature branch from origin/<defaultBranch>
-    const base = opts.remoteUrl
-      ? `origin/${opts.defaultBranch}`
-      : opts.defaultBranch;
-
+  const checkoutBranch = async (base: string): Promise<void> => {
     try {
       await runGit(['checkout', '-b', opts.branchName, base], opts.destPath);
     } catch (err: any) {
@@ -124,10 +110,46 @@ async function createReferenceClone(opts: {
         throw err;
       }
     }
+  };
+
+  const cloneLocalOnly = async (): Promise<void> => {
+    await runGit(['clone', opts.localPath, opts.destPath], path.dirname(opts.destPath));
+    await checkoutBranch(opts.defaultBranch);
+  };
+
+  if (!opts.remoteUrl) {
+    try {
+      await cloneLocalOnly();
+    } catch (err: any) {
+      throw new WorkspaceCreateError(
+        `Failed to create reference clone at ${opts.destPath}: ${err.message}`,
+        'Check that the remote URL is accessible and the local repo path is valid',
+      );
+    }
+    return;
+  }
+
+  // Remote URL is set — try reference clone from remote first
+  try {
+    await runGit(
+      ['clone', '--reference', opts.localPath, opts.remoteUrl, opts.destPath],
+      path.dirname(opts.destPath),
+    );
+    await checkoutBranch(`origin/${opts.defaultBranch}`);
+    return;
+  } catch {
+    // Remote clone failed — fall back to local-only clone
+  }
+
+  // Local-only fallback (e.g. Docker without SSH/network access)
+  try {
+    // Clean up any partial clone directory before retrying
+    await fs.rm(opts.destPath, { recursive: true, force: true }).catch(() => {});
+    await cloneLocalOnly();
   } catch (err: any) {
     throw new WorkspaceCreateError(
       `Failed to create reference clone at ${opts.destPath}: ${err.message}`,
-      'Check that the remote URL is accessible and the local repo path is valid',
+      'Check that the local repo path is valid',
     );
   }
 }
@@ -185,6 +207,10 @@ export class WorkspaceCreator {
         }
         resolvedRepos.push(repo);
       }
+
+      // Translate Docker-internal paths to host-equivalent paths
+      const { scan_paths, host_repos_path } = globalConfig.repos;
+      resolvedRepos = resolvedRepos.map(r => translateRepoPath(r, scan_paths, host_repos_path));
     }
 
     // Step 5: Create workspace folder
@@ -302,6 +328,13 @@ export class WorkspaceCreator {
         }
       }
 
+      // Compute host-side workspace path. When Forge runs in Docker, host_workspaces_path
+      // translates the bind-mount root; for native installs both paths are identical.
+      const hostMountPath = globalConfig.workspace.host_workspaces_path
+        ? globalConfig.workspace.host_workspaces_path
+        : mountPath;
+      const hostWorkspacePath = path.join(hostMountPath, name);
+
       // Step 8a: Register MCP servers in {workspace}/.claude/settings.local.json using the
       // managed wrapper script. Ensures mcp-remote processes self-terminate when claude exits
       // (fixes process leak). Uses host_endpoints URLs so Claude Code on the host can connect.
@@ -318,13 +351,6 @@ export class WorkspaceCreator {
             mcpServersToRegister.push({ name: serverName, url });
           }
         }
-        // Compute host-side workspace path for absolute command references in settings.json.
-        // When Forge runs in Docker, host_workspaces_path translates the bind-mount root;
-        // for native installs both paths are identical.
-        const hostMountPath = globalConfig.workspace.host_workspaces_path
-          ? globalConfig.workspace.host_workspaces_path
-          : mountPath;
-        const hostWorkspacePath = path.join(hostMountPath, name);
         await updateClaudeMcpServers(mcpServersToRegister, workspacePath, hostWorkspacePath);
       } catch (err: any) {
         console.warn(`[Forge] Warning: Could not update .claude/settings.local.json: ${err.message}`);
@@ -379,7 +405,7 @@ export class WorkspaceCreator {
 ${options.storyTitle ? `Story: ${options.storyTitle} (${options.storyId})` : 'No story linked'}
 
 ## Repositories
-${reposWithWorktrees.map(r => `- **${r.name}**: ${r.localPath}`).join('\n') || '(none)'}
+${reposWithWorktrees.map(r => `- **${r.name}**: ${r.worktreePath ? path.join(hostWorkspacePath, r.name) : r.localPath}`).join('\n') || '(none)'}
 
 ## MCP Servers
 ${Object.keys(workspaceConfigMeta.mcp_servers).map(s => `- ${s}`).join('\n') || '(none configured)'}
