@@ -315,24 +315,49 @@ export class ForgeCore {
   }
 
   /**
+   * Translate a Docker-internal repo localPath to the equivalent host path.
+   * Returns the entry unchanged if host_repos_path is not configured or
+   * the localPath doesn't start with any of the configured scan_paths.
+   */
+  private translateRepoPath(
+    entry: RepoIndexEntry,
+    scanPaths: string[],
+    hostReposPath: string | undefined
+  ): RepoIndexEntry {
+    if (!hostReposPath) return entry;
+
+    for (const scanPath of scanPaths) {
+      const prefix = scanPath.endsWith('/') ? scanPath : scanPath + '/';
+      if (entry.localPath === scanPath || entry.localPath.startsWith(prefix)) {
+        const relative = entry.localPath.slice(scanPath.length);
+        const hostBase = hostReposPath.endsWith('/') ? hostReposPath.slice(0, -1) : hostReposPath;
+        return { ...entry, localPath: hostBase + relative };
+      }
+    }
+
+    return entry;
+  }
+
+  /**
    * List repositories from the index, optionally filtered by query.
    */
   async repoList(query?: string): Promise<RepoIndexEntry[]> {
     const globalConfig = await loadGlobalConfig(this.globalConfigPath);
-    const { index_path, scan_paths } = globalConfig.repos;
-    
+    const { index_path, scan_paths, host_repos_path } = globalConfig.repos;
+
     let index = await loadRepoIndex(index_path);
-    
+
     // Auto-scan if no index exists and scan_paths configured
     if (!index && scan_paths.length > 0) {
       console.log('[Forge] No repo index found. Running initial scan...');
       index = await this.repoScan();
     }
-    
+
     if (!index) return [];
-    
+
     const query_obj = new RepoIndexQuery(index.repos);
-    return query ? query_obj.search(query) : query_obj.listAll();
+    const results = query ? query_obj.search(query) : query_obj.listAll();
+    return results.map(r => this.translateRepoPath(r, scan_paths, host_repos_path));
   }
 
   /**
@@ -342,24 +367,25 @@ export class ForgeCore {
     if (!opts.name && !opts.remoteUrl) {
       throw new Error('Either name or remoteUrl must be provided');
     }
-    
+
     const globalConfig = await loadGlobalConfig(this.globalConfigPath);
-    const { index_path, scan_paths } = globalConfig.repos;
-    
+    const { index_path, scan_paths, host_repos_path } = globalConfig.repos;
+
     let index = await loadRepoIndex(index_path);
-    
+
     // Auto-scan if no index exists
     if (!index && scan_paths.length > 0) {
       console.log('[Forge] No repo index found. Running initial scan...');
       index = await this.repoScan();
     }
-    
+
     if (!index) return null;
-    
+
     const q = new RepoIndexQuery(index.repos);
-    if (opts.name) return q.findByName(opts.name);
-    if (opts.remoteUrl) return q.findByRemoteUrl(opts.remoteUrl);
-    return null;
+    let entry: RepoIndexEntry | null = null;
+    if (opts.name) entry = q.findByName(opts.name);
+    else if (opts.remoteUrl) entry = q.findByRemoteUrl(opts.remoteUrl);
+    return entry ? this.translateRepoPath(entry, scan_paths, host_repos_path) : null;
   }
 
   /**

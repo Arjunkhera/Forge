@@ -62,6 +62,14 @@ export type HostEndpoints = z.infer<typeof HostEndpointsSchema>;
 export const ReposConfigSchema = z.object({
   scan_paths: z.array(z.string()).default([]),
   index_path: z.string().default('~/.forge/repos.json'),
+  /**
+   * Host-side absolute path corresponding to the first scan_path.
+   * Only needed when Forge runs inside Docker and the repos directory is
+   * bind-mounted from the host (e.g., ${HOST_REPOS_PATH}:/data/repos).
+   * When set, localPath in repo results is translated from the container
+   * path to the equivalent host path so callers can access repos directly.
+   */
+  host_repos_path: z.string().optional(),
 });
 
 export type ReposConfig = z.infer<typeof ReposConfigSchema>;

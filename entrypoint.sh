@@ -23,6 +23,10 @@ FORGE_HOST_FORGE_URL="${FORGE_HOST_FORGE_URL:-}"
 
 # Colon-separated list of paths to scan for git repos, e.g. /data/repos:/data/extra
 FORGE_SCAN_PATHS="${FORGE_SCAN_PATHS:-}"
+# Host-side path that corresponds to the first scan path (Docker only).
+# When set, localPath in repo results is translated from the container path
+# to the host path so Claude Code on the host can access repos directly.
+FORGE_HOST_REPOS_PATH="${FORGE_HOST_REPOS_PATH:-}"
 
 log() {
   echo "{\"level\":\"info\",\"message\":\"$1\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >&2
@@ -84,6 +88,11 @@ if [ -n "$FORGE_SCAN_PATHS" ]; then
   done
 fi
 
+# Build optional host_repos_path line
+HOST_REPOS_PATH_LINE=""
+[ -n "$FORGE_HOST_REPOS_PATH" ] && HOST_REPOS_PATH_LINE="
+  host_repos_path: ${FORGE_HOST_REPOS_PATH}"
+
 cat > "${CONFIG_DIR}/config.yaml" << EOF
 registries:
   - type: filesystem
@@ -105,7 +114,7 @@ mcp_endpoints:
 ${HOST_ENDPOINTS_BLOCK}
 repos:
   scan_paths: ${SCAN_PATHS_YAML}
-  index_path: ${CONFIG_DIR}/repos.json
+  index_path: ${CONFIG_DIR}/repos.json${HOST_REPOS_PATH_LINE}
 EOF
 
 log "Config written. Registry: ${REGISTRY_PATH}, Anvil: ${ANVIL_URL}, Vault: ${VAULT_URL}"
