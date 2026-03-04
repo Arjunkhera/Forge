@@ -18,8 +18,8 @@ export function generateWorkspaceId(): string {
 export class WorkspaceMetadataStore {
   private storePath: string;
 
-  constructor(forgeDir: string = path.join(process.env.HOME ?? '~', '.forge')) {
-    this.storePath = path.join(forgeDir, WORKSPACES_FILE);
+  constructor(storePath: string = path.join(process.env.HOME ?? '~', '.forge', WORKSPACES_FILE)) {
+    this.storePath = storePath;
   }
 
   // For testing — override store path

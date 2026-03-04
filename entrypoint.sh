@@ -102,7 +102,8 @@ registries:
 workspace:
   mount_path: ${WORKSPACES_PATH}
   default_config: sdlc-default
-  retention_days: 30${HOST_WORKSPACES_LINE}
+  retention_days: 30
+  store_path: ${WORKSPACES_PATH}/workspaces.json${HOST_WORKSPACES_LINE}
 
 mcp_endpoints:
   anvil:

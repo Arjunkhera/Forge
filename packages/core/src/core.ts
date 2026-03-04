@@ -85,8 +85,8 @@ export class ForgeCore {
   private readonly workspaceManager: WorkspaceManager;
   private readonly compiler: Compiler;
   private readonly globalConfigPath: string | undefined;
-  private readonly lifecycleManager: WorkspaceLifecycleManager;
-  private readonly metadataStore: WorkspaceMetadataStore;
+  private _metadataStore?: WorkspaceMetadataStore;
+  private _lifecycleManager?: WorkspaceLifecycleManager;
 
   constructor(
     private readonly workspaceRoot: string = process.cwd(),
@@ -96,8 +96,22 @@ export class ForgeCore {
     this.compiler = new Compiler();
     this.compiler.register(new ClaudeCodeStrategy());
     this.globalConfigPath = options?.globalConfigPath;
-    this.metadataStore = new WorkspaceMetadataStore();
-    this.lifecycleManager = new WorkspaceLifecycleManager(undefined, this.metadataStore);
+  }
+
+  private async getMetadataStore(): Promise<WorkspaceMetadataStore> {
+    if (!this._metadataStore) {
+      const globalConfig = await loadGlobalConfig(this.globalConfigPath);
+      this._metadataStore = new WorkspaceMetadataStore(globalConfig.workspace.store_path);
+    }
+    return this._metadataStore;
+  }
+
+  private async getLifecycleManager(): Promise<WorkspaceLifecycleManager> {
+    if (!this._lifecycleManager) {
+      const store = await this.getMetadataStore();
+      this._lifecycleManager = new WorkspaceLifecycleManager(undefined, store);
+    }
+    return this._lifecycleManager;
   }
 
   /**
@@ -468,43 +482,53 @@ export class ForgeCore {
    * List workspaces, optionally filtered by status.
    */
   async workspaceList(filter?: { status?: string }): Promise<WorkspaceRecord[]> {
+    const store = await this.getMetadataStore();
     const filterObj = filter?.status ? { status: filter.status as any } : undefined;
-    return this.metadataStore.list(filterObj);
+    return store.list(filterObj);
+  }
+
+  /**
+   * Find the first workspace linked to a story ID. Returns null if not found.
+   */
+  async workspaceFindByStory(storyId: string): Promise<WorkspaceRecord | null> {
+    const store = await this.getMetadataStore();
+    return store.findByStoryId(storyId);
   }
 
   /**
    * Get status of a workspace.
    */
   async workspaceStatus(id: string): Promise<WorkspaceRecord | null> {
-    return this.metadataStore.get(id);
+    const store = await this.getMetadataStore();
+    return store.get(id);
   }
 
   /**
    * Pause a workspace.
    */
   async workspacePause(id: string): Promise<WorkspaceRecord> {
-    return this.lifecycleManager.pause(id);
+    return (await this.getLifecycleManager()).pause(id);
   }
 
   /**
    * Complete a workspace.
    */
   async workspaceComplete(id: string): Promise<WorkspaceRecord> {
-    return this.lifecycleManager.complete(id);
+    return (await this.getLifecycleManager()).complete(id);
   }
 
   /**
    * Delete a workspace.
    */
   async workspaceDelete(id: string, opts?: { force?: boolean }): Promise<void> {
-    return this.lifecycleManager.delete(id, opts);
+    return (await this.getLifecycleManager()).delete(id, opts);
   }
 
   /**
    * Archive a workspace.
    */
   async workspaceArchive(id: string): Promise<WorkspaceRecord> {
-    return this.lifecycleManager.archive(id);
+    return (await this.getLifecycleManager()).archive(id);
   }
 
   /**
@@ -513,7 +537,7 @@ export class ForgeCore {
   async workspaceClean(opts?: { dryRun?: boolean }): Promise<{ cleaned: string[]; skipped: string[] }> {
     const globalConfig = await loadGlobalConfig(this.globalConfigPath);
     const retentionDays = globalConfig.workspace.retention_days;
-    return this.lifecycleManager.clean(retentionDays, opts);
+    return (await this.getLifecycleManager()).clean(retentionDays, opts);
   }
 
   // ─── Global Plugin Management ───

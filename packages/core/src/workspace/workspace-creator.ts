@@ -390,7 +390,7 @@ Source \`workspace.env\` for SDLC environment variables.
       await fs.writeFile(path.join(workspacePath, 'CLAUDE.md'), claudeMd, 'utf-8');
 
       // Step 11: Register workspace in metadata store
-      const metaStore = new WorkspaceMetadataStore();
+      const metaStore = new WorkspaceMetadataStore(globalConfig.workspace.store_path);
       const record: WorkspaceRecord = {
         id,
         name,
