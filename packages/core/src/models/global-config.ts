@@ -129,6 +129,18 @@ export const GlobalPluginEntrySchema = z.object({
 
 export type GlobalPluginEntry = z.infer<typeof GlobalPluginEntrySchema>;
 
+/**
+ * Claude Code permissions to write into workspace settings.local.json.
+ * Prevents the local file from shadowing the user's global ~/.claude/settings.json
+ * permissions (Claude Code treats local settings as authoritative when present).
+ */
+export const ClaudePermissionsSchema = z.object({
+  allow: z.array(z.string()).default(['mcp__*']),
+  deny: z.array(z.string()).default([]),
+});
+
+export type ClaudePermissions = z.infer<typeof ClaudePermissionsSchema>;
+
 export const GlobalConfigSchema = z.object({
   registries: z.array(RegistryConfigSchema).default([]),
   workspace: WorkspaceSettingsSchema.default({}),
@@ -136,6 +148,7 @@ export const GlobalConfigSchema = z.object({
   host_endpoints: HostEndpointsSchema.optional(),
   repos: ReposConfigSchema.default({}),
   global_plugins: z.record(z.string(), GlobalPluginEntrySchema).default({}),
+  claude_permissions: ClaudePermissionsSchema.default({}),
 });
 
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;

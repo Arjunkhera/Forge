@@ -15,7 +15,7 @@ describe('updateClaudeMcpServers', () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('creates settings.local.json with mcpServers and mcp__* permission', async () => {
+  it('creates settings.local.json with mcpServers and default mcp__* permission', async () => {
     await updateClaudeMcpServers(
       [{ name: 'anvil', url: 'http://localhost:8100' }],
       tmpDir,
@@ -59,7 +59,7 @@ describe('updateClaudeMcpServers', () => {
     expect(settings.mcpServers.anvil.url).toBe('http://localhost:8100/mcp');
   });
 
-  it('preserves existing permissions and adds mcp__* if missing', async () => {
+  it('preserves existing permissions and adds defaults if missing', async () => {
     const settingsDir = path.join(tmpDir, '.claude');
     await fs.mkdir(settingsDir, { recursive: true });
     await fs.writeFile(
@@ -85,7 +85,7 @@ describe('updateClaudeMcpServers', () => {
     expect(settings.permissions.deny).toEqual(['Bash(rm *)']);
   });
 
-  it('does not duplicate mcp__* if already present', async () => {
+  it('does not duplicate entries if already present', async () => {
     const settingsDir = path.join(tmpDir, '.claude');
     await fs.mkdir(settingsDir, { recursive: true });
     await fs.writeFile(
@@ -138,5 +138,87 @@ describe('updateClaudeMcpServers', () => {
 
     expect(Object.keys(settings.mcpServers)).toEqual(['anvil', 'vault', 'forge']);
     expect(settings.permissions.allow).toContain('mcp__*');
+  });
+
+  it('applies full claude_permissions from config (allow + deny)', async () => {
+    await updateClaudeMcpServers(
+      [{ name: 'anvil', url: 'http://localhost:8100' }],
+      tmpDir,
+      undefined,
+      {
+        allow: ['Bash(*)', 'Edit(*)', 'Write(*)', 'Read(*)', 'mcp__*'],
+        deny: ['Bash(rm *)', 'Bash(rmdir *)'],
+      },
+    );
+
+    const raw = await fs.readFile(
+      path.join(tmpDir, '.claude', 'settings.local.json'),
+      'utf-8',
+    );
+    const settings = JSON.parse(raw);
+
+    expect(settings.permissions.allow).toEqual(
+      expect.arrayContaining(['Bash(*)', 'Edit(*)', 'Write(*)', 'Read(*)', 'mcp__*']),
+    );
+    expect(settings.permissions.deny).toEqual(
+      expect.arrayContaining(['Bash(rm *)', 'Bash(rmdir *)']),
+    );
+  });
+
+  it('merges config permissions with existing without duplicates', async () => {
+    const settingsDir = path.join(tmpDir, '.claude');
+    await fs.mkdir(settingsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(settingsDir, 'settings.local.json'),
+      JSON.stringify({
+        permissions: { allow: ['Bash(*)', 'mcp__*'], deny: ['Bash(rm *)'] },
+      }),
+    );
+
+    await updateClaudeMcpServers(
+      [{ name: 'anvil', url: 'http://localhost:8100' }],
+      tmpDir,
+      undefined,
+      {
+        allow: ['Bash(*)', 'Edit(*)', 'mcp__*'],
+        deny: ['Bash(rm *)', 'Bash(rmdir *)'],
+      },
+    );
+
+    const raw = await fs.readFile(
+      path.join(settingsDir, 'settings.local.json'),
+      'utf-8',
+    );
+    const settings = JSON.parse(raw);
+
+    // No duplicates
+    const bashCount = settings.permissions.allow.filter((x: string) => x === 'Bash(*)').length;
+    expect(bashCount).toBe(1);
+    const mcpCount = settings.permissions.allow.filter((x: string) => x === 'mcp__*').length;
+    expect(mcpCount).toBe(1);
+    const rmCount = settings.permissions.deny.filter((x: string) => x === 'Bash(rm *)').length;
+    expect(rmCount).toBe(1);
+
+    // New entries added
+    expect(settings.permissions.allow).toContain('Edit(*)');
+    expect(settings.permissions.deny).toContain('Bash(rmdir *)');
+  });
+
+  it('uses default mcp__* when no claudePermissions provided', async () => {
+    await updateClaudeMcpServers(
+      [{ name: 'anvil', url: 'http://localhost:8100' }],
+      tmpDir,
+      undefined,
+      undefined,
+    );
+
+    const raw = await fs.readFile(
+      path.join(tmpDir, '.claude', 'settings.local.json'),
+      'utf-8',
+    );
+    const settings = JSON.parse(raw);
+
+    expect(settings.permissions.allow).toEqual(['mcp__*']);
+    expect(settings.permissions.deny).toBeUndefined();
   });
 });
