@@ -474,8 +474,9 @@ export class ForgeCore {
    * Create an isolated reference clone of a repository.
    *
    * Looks up the repo in the local index, creates a reference clone at
-   * destPath (default: <mountPath>/<repoName>-clone-<shortId>), optionally
-   * creates a feature branch, and returns paths in host-translated form.
+   * destPath (default: <workspaceRoot>/<repoName> when inside a workspace,
+   * or <mountPath>/<repoName> otherwise), optionally creates a feature
+   * branch, and returns paths in host-translated form.
    */
   async repoClone(opts: {
     repoName: string;
@@ -500,8 +501,12 @@ export class ForgeCore {
     }
 
     const mountPath = expandPath(globalConfig.workspace.mount_path);
-    const shortId = Math.random().toString(36).slice(2, 10);
-    const clonePath = opts.destPath ?? path.join(mountPath, `${opts.repoName}-clone-${shortId}`);
+    // If workspaceRoot is inside mountPath, we're in a workspace — clone into it
+    const resolvedWsRoot = path.resolve(this.workspaceRoot);
+    const resolvedMount = path.resolve(mountPath);
+    const insideWorkspace = resolvedWsRoot.startsWith(resolvedMount + path.sep) && resolvedWsRoot !== resolvedMount;
+    const basePath = insideWorkspace ? resolvedWsRoot : mountPath;
+    const clonePath = opts.destPath ?? path.join(basePath, opts.repoName);
 
     await createReferenceClone({
       localPath: repo.localPath,
