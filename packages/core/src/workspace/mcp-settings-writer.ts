@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 import path from 'path';
+import type { ClaudePermissions } from '../models/global-config.js';
 
 /**
  * Describes an MCP server to register in .claude/settings.local.json.
@@ -10,25 +11,26 @@ export interface McpServerEntry {
 }
 
 /**
- * Merge the given MCP server entries into {workspacePath}/.claude/settings.local.json
- * using Claude Code's native HTTP transport. Preserves all existing settings.
+ * Merge the given MCP server entries and permissions into
+ * {workspacePath}/.claude/settings.local.json using Claude Code's native
+ * HTTP transport. Preserves all existing settings.
  *
- * Writes to settings.local.json (machine-specific, gitignored) because it contains
- * localhost URLs that differ per machine.
+ * Writes to settings.local.json (machine-specific, gitignored) because it
+ * contains localhost URLs that differ per machine.
  *
  * Each entry produces a mcpServers record like:
  *   "anvil": { "type": "http", "url": "http://localhost:8100/mcp" }
  *
- * This replaces the previous mcp-remote wrapper approach.  Claude Code natively
- * supports Streamable HTTP via `type: "http"`, which eliminates the mcp-remote
- * middleman process entirely — fixing both the process-leak bug (orphaned
- * mcp-remote processes after session end) and the TCP-hang bug (fetch() with no
- * per-request timeout after macOS sleep/wake).
+ * Permissions from `claude_permissions` in ~/.forge/config.yaml are merged
+ * into the file so that the local settings don't shadow the user's global
+ * ~/.claude/settings.json permissions (Claude Code treats a local
+ * settings.local.json as authoritative when it exists).
  */
 export async function updateClaudeMcpServers(
   servers: McpServerEntry[],
   workspacePath: string,
   _hostWorkspacePath?: string,
+  claudePermissions?: ClaudePermissions,
 ): Promise<void> {
   if (servers.length === 0) return;
 
@@ -55,15 +57,30 @@ export async function updateClaudeMcpServers(
   }
   settings.mcpServers = mcpServers;
 
-  // Ensure MCP tools are pre-approved so Claude Code doesn't prompt for each one.
+  // Merge permissions from claude_permissions config into the local file.
   // Without this, the mere existence of settings.local.json causes Claude Code to
-  // treat the local permissions as authoritative, shadowing the global "mcp__*" wildcard.
+  // treat the local permissions as authoritative, shadowing the global wildcard.
+  const configAllow = claudePermissions?.allow ?? ['mcp__*'];
+  const configDeny = claudePermissions?.deny ?? [];
+
   const permissions = (settings.permissions as Record<string, unknown>) ?? {};
   const allow = Array.isArray(permissions.allow) ? permissions.allow as string[] : [];
-  if (!allow.includes('mcp__*')) {
-    allow.push('mcp__*');
+  for (const entry of configAllow) {
+    if (!allow.includes(entry)) {
+      allow.push(entry);
+    }
   }
   permissions.allow = allow;
+
+  if (configDeny.length > 0) {
+    const deny = Array.isArray(permissions.deny) ? permissions.deny as string[] : [];
+    for (const entry of configDeny) {
+      if (!deny.includes(entry)) {
+        deny.push(entry);
+      }
+    }
+    permissions.deny = deny;
+  }
   settings.permissions = permissions;
 
   await fs.mkdir(path.dirname(settingsPath), { recursive: true });

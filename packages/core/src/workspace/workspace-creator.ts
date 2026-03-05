@@ -272,7 +272,7 @@ export class WorkspaceCreator {
             mcpServersToRegister.push({ name: serverName, url });
           }
         }
-        await updateClaudeMcpServers(mcpServersToRegister, workspacePath, hostWorkspacePath);
+        await updateClaudeMcpServers(mcpServersToRegister, workspacePath, hostWorkspacePath, globalConfig.claude_permissions);
       } catch (err: any) {
         console.warn(`[Forge] Warning: Could not update .claude/settings.local.json: ${err.message}`);
       }
