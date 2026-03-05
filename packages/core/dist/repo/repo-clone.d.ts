@@ -10,6 +10,7 @@ export interface RepoCloneResult {
     clonePath: string;
     hostClonePath: string;
     branch: string;
+    origin: string;
 }
 export declare class RepoCloneError extends Error {
     readonly suggestion?: string | undefined;

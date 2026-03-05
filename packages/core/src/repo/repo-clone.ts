@@ -18,6 +18,7 @@ export interface RepoCloneResult {
   clonePath: string;
   hostClonePath: string;
   branch: string;
+  origin: string;
 }
 
 export class RepoCloneError extends Error {
@@ -96,4 +97,8 @@ export async function createReferenceClone(opts: RepoCloneOptions): Promise<void
       'Check that the local repo path is valid',
     );
   }
+
+  // Fix origin: local-only fallback sets origin to localPath (Docker-internal).
+  // Repoint to remoteUrl so git push works from the host.
+  await runGit(['remote', 'set-url', 'origin', opts.remoteUrl], opts.destPath);
 }

@@ -432,7 +432,8 @@ function buildServer(workspaceRoot: string): Server {
                 clonePath: cloneResult.clonePath,
                 hostClonePath: cloneResult.hostClonePath,
                 branch: cloneResult.branch,
-                message: `Clone created at ${cloneResult.hostClonePath} on branch '${cloneResult.branch}'. Work in this directory — it is isolated from the original repo.`,
+                origin: cloneResult.origin,
+                message: `Clone created at ${cloneResult.hostClonePath} on branch '${cloneResult.branch}'. Origin remote: ${cloneResult.origin}. Work in this directory — it is isolated from the original repo.`,
               }, null, 2),
             }],
           };
