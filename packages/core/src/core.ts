@@ -518,11 +518,14 @@ export class ForgeCore {
     const cloneRelative = path.relative(mountPath, clonePath);
     const hostClonePath = path.join(hostMountPath, cloneRelative);
 
+    const origin = repo.remoteUrl ?? translatedRepo.localPath;
+
     return {
       repoName: opts.repoName,
       clonePath,
       hostClonePath,
       branch: opts.branchName ?? repo.defaultBranch,
+      origin,
     };
   }
 

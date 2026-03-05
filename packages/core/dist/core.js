@@ -408,11 +408,13 @@ class ForgeCore {
         const hostMountPath = globalConfig.workspace.host_workspaces_path ?? mountPath;
         const cloneRelative = path_1.default.relative(mountPath, clonePath);
         const hostClonePath = path_1.default.join(hostMountPath, cloneRelative);
+        const origin = repo.remoteUrl ?? translatedRepo.localPath;
         return {
             repoName: opts.repoName,
             clonePath,
             hostClonePath,
             branch: opts.branchName ?? repo.defaultBranch,
+            origin,
         };
     }
     /**

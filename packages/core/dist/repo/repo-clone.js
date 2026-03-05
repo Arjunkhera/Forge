@@ -80,5 +80,8 @@ async function createReferenceClone(opts) {
     catch (err) {
         throw new RepoCloneError(`Failed to clone ${opts.localPath} to ${opts.destPath}: ${err.message}`, 'Check that the local repo path is valid');
     }
+    // Fix origin: local-only fallback sets origin to localPath (Docker-internal).
+    // Repoint to remoteUrl so git push works from the host.
+    await runGit(['remote', 'set-url', 'origin', opts.remoteUrl], opts.destPath);
 }
 //# sourceMappingURL=repo-clone.js.map
