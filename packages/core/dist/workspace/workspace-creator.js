@@ -8,8 +8,8 @@ exports.slugify = slugify;
 exports.generateBranchName = generateBranchName;
 const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
-const child_process_1 = require("child_process");
-const util_1 = require("util");
+const core_js_1 = require("../core.js");
+const repo_clone_js_1 = require("../repo/repo-clone.js");
 const workspace_metadata_store_js_1 = require("./workspace-metadata-store.js");
 const workspace_manager_js_1 = require("./workspace-manager.js");
 const global_config_loader_js_1 = require("../config/global-config-loader.js");
@@ -17,7 +17,6 @@ const path_utils_js_1 = require("../config/path-utils.js");
 const repo_index_store_js_1 = require("../repo/repo-index-store.js");
 const repo_index_query_js_1 = require("../repo/repo-index-query.js");
 const mcp_settings_writer_js_1 = require("./mcp-settings-writer.js");
-const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
 /**
  * Custom error type for workspace creation failures.
  */
@@ -61,47 +60,6 @@ function generateBranchName(pattern, vars) {
     // Clean up double slashes
     result = result.replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
     return result || 'workspace';
-}
-/**
- * Helper: Create a git worktree for a repository.
- */
-async function createGitWorktree(opts) {
-    const runGit = async (args, cwd) => {
-        const { stdout } = await execFileAsync('git', args, { cwd, timeout: 30000 });
-        return stdout.trim();
-    };
-    try {
-        // Stash if requested
-        if (opts.stashFirst) {
-            try {
-                const status = await runGit(['status', '--porcelain'], opts.repoPath);
-                if (status) {
-                    await runGit(['stash'], opts.repoPath);
-                }
-            }
-            catch (err) {
-                // Stash failure is non-fatal
-                console.warn(`[Forge] Warning: Could not stash changes in ${opts.repoPath}`);
-            }
-        }
-        // Try to create worktree with new branch
-        try {
-            await runGit(['worktree', 'add', opts.worktreePath, '-b', opts.branchName], opts.repoPath);
-        }
-        catch (err) {
-            const errMsg = err.message || '';
-            // If branch already exists, try without -b
-            if (errMsg.includes('already exists')) {
-                await runGit(['worktree', 'add', opts.worktreePath, opts.branchName], opts.repoPath);
-            }
-            else {
-                throw err;
-            }
-        }
-    }
-    catch (err) {
-        throw new WorkspaceCreateError(`Failed to create git worktree at ${opts.worktreePath}: ${err.message}`, 'Check that the repo path is valid and accessible');
-    }
 }
 /**
  * Main workspace creator class.
@@ -154,7 +112,8 @@ class WorkspaceCreator {
             throw new WorkspaceCreateError(`Failed to create workspace folder at ${workspacePath}: ${err.message}`);
         }
         try {
-            // Step 6: Create git worktrees for each repo
+            // Step 6: Create reference clones for each repo
+            const { scan_paths, host_repos_path } = globalConfig.repos;
             const reposWithWorktrees = [];
             for (const repo of resolvedRepos) {
                 const branchName = generateBranchName(workspaceConfigMeta.git_workflow.branch_pattern, {
@@ -162,28 +121,30 @@ class WorkspaceCreator {
                     id: options.storyId ?? id,
                     slug: slugify(options.storyTitle ?? options.configName),
                 });
-                const worktreePath = path_1.default.join(workspacePath, repo.name);
+                const clonePath = path_1.default.join(workspacePath, repo.name);
+                // Translate to host path for storage/display; git ops use original Docker-internal path
+                const translatedRepo = (0, core_js_1.translateRepoPath)(repo, scan_paths, host_repos_path);
                 try {
-                    await createGitWorktree({
-                        repoPath: repo.localPath,
-                        worktreePath,
+                    await (0, repo_clone_js_1.createReferenceClone)({
+                        localPath: repo.localPath, // Docker-internal — accessible from within the container
+                        remoteUrl: repo.remoteUrl,
+                        destPath: clonePath,
                         branchName,
-                        baseBranch: workspaceConfigMeta.git_workflow.base_branch,
-                        stashFirst: workspaceConfigMeta.git_workflow.stash_before_checkout,
+                        defaultBranch: repo.defaultBranch,
                     });
                     reposWithWorktrees.push({
                         name: repo.name,
-                        localPath: repo.localPath,
+                        localPath: translatedRepo.localPath, // host path for record/CLAUDE.md
                         branch: branchName,
-                        worktreePath,
+                        worktreePath: clonePath,
                     });
                 }
                 catch (err) {
-                    // Graceful fallback: log warning but continue without worktree
-                    console.warn(`[Forge] Warning: Could not create worktree for ${repo.name}: ${err.message}`);
+                    // Graceful fallback: log warning but continue without clone
+                    console.warn(`[Forge] Warning: Could not create reference clone for ${repo.name}: ${err.message}`);
                     reposWithWorktrees.push({
                         name: repo.name,
-                        localPath: repo.localPath,
+                        localPath: translatedRepo.localPath, // host path for record/CLAUDE.md
                         branch: branchName,
                         worktreePath: null,
                     });
@@ -234,6 +195,12 @@ class WorkspaceCreator {
                     await fs_1.promises.writeFile(path_1.default.join(mcpDir, `${serverName}.json`), JSON.stringify(mcpConfig, null, 2), 'utf-8');
                 }
             }
+            // Compute host-side workspace path. When Forge runs in Docker, host_workspaces_path
+            // translates the bind-mount root; for native installs both paths are identical.
+            const hostMountPath = globalConfig.workspace.host_workspaces_path
+                ? globalConfig.workspace.host_workspaces_path
+                : mountPath;
+            const hostWorkspacePath = path_1.default.join(hostMountPath, name);
             // Step 8a: Register MCP servers in {workspace}/.claude/settings.local.json using the
             // managed wrapper script. Ensures mcp-remote processes self-terminate when claude exits
             // (fixes process leak). Uses host_endpoints URLs so Claude Code on the host can connect.
@@ -248,19 +215,25 @@ class WorkspaceCreator {
                         mcpServersToRegister.push({ name: serverName, url });
                     }
                 }
-                // Compute host-side workspace path for absolute command references in settings.json.
-                // When Forge runs in Docker, host_workspaces_path translates the bind-mount root;
-                // for native installs both paths are identical.
-                const hostMountPath = globalConfig.workspace.host_workspaces_path
-                    ? globalConfig.workspace.host_workspaces_path
-                    : mountPath;
-                const hostWorkspacePath = path_1.default.join(hostMountPath, name);
                 await (0, mcp_settings_writer_js_1.updateClaudeMcpServers)(mcpServersToRegister, workspacePath, hostWorkspacePath);
             }
             catch (err) {
                 console.warn(`[Forge] Warning: Could not update .claude/settings.local.json: ${err.message}`);
             }
             // Step 9: Emit environment variables file
+            // Resolve workflow metadata for the first repo (drives PR strategy in scripts)
+            let workflowStrategy = '';
+            let prTarget = '';
+            if (resolvedRepos.length > 0) {
+                try {
+                    const repoWorkflow = await this.forge.repoWorkflow(resolvedRepos[0].name);
+                    workflowStrategy = repoWorkflow.workflow.strategy;
+                    prTarget = repoWorkflow.workflow.prTarget;
+                }
+                catch {
+                    // Non-fatal: workflow vars will be empty
+                }
+            }
             const envVars = {
                 SDLC_BRANCH_PATTERN: workspaceConfigMeta.git_workflow.branch_pattern,
                 SDLC_BASE_BRANCH: workspaceConfigMeta.git_workflow.base_branch,
@@ -271,6 +244,10 @@ class WorkspaceCreator {
                 FORGE_WORKSPACE_ID: id,
                 FORGE_WORKSPACE_NAME: name,
             };
+            if (workflowStrategy)
+                envVars['SDLC_WORKFLOW_STRATEGY'] = workflowStrategy;
+            if (prTarget)
+                envVars['SDLC_PR_TARGET'] = prTarget;
             const envContent = Object.entries(envVars)
                 .map(([k, v]) => `${k}=${v}`)
                 .join('\n') + '\n';
@@ -284,7 +261,7 @@ class WorkspaceCreator {
 ${options.storyTitle ? `Story: ${options.storyTitle} (${options.storyId})` : 'No story linked'}
 
 ## Repositories
-${reposWithWorktrees.map(r => `- **${r.name}**: ${r.localPath}`).join('\n') || '(none)'}
+${reposWithWorktrees.map(r => `- **${r.name}**: ${r.worktreePath ? path_1.default.join(hostWorkspacePath, r.name) : r.localPath}`).join('\n') || '(none)'}
 
 ## MCP Servers
 ${Object.keys(workspaceConfigMeta.mcp_servers).map(s => `- ${s}`).join('\n') || '(none configured)'}
@@ -294,7 +271,7 @@ Source \`workspace.env\` for SDLC environment variables.
 `;
             await fs_1.promises.writeFile(path_1.default.join(workspacePath, 'CLAUDE.md'), claudeMd, 'utf-8');
             // Step 11: Register workspace in metadata store
-            const metaStore = new workspace_metadata_store_js_1.WorkspaceMetadataStore();
+            const metaStore = new workspace_metadata_store_js_1.WorkspaceMetadataStore(globalConfig.workspace.store_path);
             const record = {
                 id,
                 name,

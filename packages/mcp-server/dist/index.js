@@ -41,7 +41,6 @@ const streamableHttp_js_1 = require("@modelcontextprotocol/sdk/server/streamable
 const node_crypto_1 = require("node:crypto");
 const types_js_1 = require("@modelcontextprotocol/sdk/types.js");
 const core_1 = require("@forge/core");
-const core_2 = require("@forge/core");
 const http = __importStar(require("node:http"));
 const startTime = Date.now();
 // ─── JSON logging ──────────────────────────────────────────────────────────
@@ -160,6 +159,42 @@ const TOOLS = [
                     description: 'Remote URL (https or git@) to match against (optional)',
                 },
             },
+        },
+    },
+    {
+        name: 'forge_repo_workflow',
+        description: 'Resolve the git workflow configuration for a repository. Checks Vault repo profile first (team-wide conventions), then auto-detects from local git remotes, then falls back to defaults. Returns strategy (owner|fork|direct), default branch, PR target, and hosting info.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                name: {
+                    type: 'string',
+                    description: 'Repository name to resolve workflow for',
+                },
+            },
+            required: ['name'],
+        },
+    },
+    {
+        name: 'forge_repo_clone',
+        description: 'Create an isolated working copy (reference clone) of a repository. The clone gets its own feature branch, independent of the original. Use this to get a safe working directory before making code changes to any repo.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                repoName: {
+                    type: 'string',
+                    description: 'Repository name from the local index (use forge_repo_list to discover)',
+                },
+                branchName: {
+                    type: 'string',
+                    description: 'Feature branch to create in the clone (optional). If omitted, stays on the default branch.',
+                },
+                destPath: {
+                    type: 'string',
+                    description: 'Override destination path for the clone (optional). Defaults to <mountPath>/<repoName>-clone-<id>.',
+                },
+            },
+            required: ['repoName'],
         },
     },
     {
@@ -362,6 +397,44 @@ function buildServer(workspaceRoot) {
                             }],
                     };
                 }
+                case 'forge_repo_workflow': {
+                    const { name } = (args ?? {});
+                    if (!name) {
+                        return {
+                            content: [{ type: 'text', text: JSON.stringify({ error: true, message: 'name is required' }) }],
+                            isError: true,
+                        };
+                    }
+                    const workflow = await forge.repoWorkflow(name);
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify(workflow, null, 2),
+                            }],
+                    };
+                }
+                case 'forge_repo_clone': {
+                    const { repoName, branchName, destPath } = (args ?? {});
+                    if (!repoName) {
+                        return {
+                            content: [{ type: 'text', text: JSON.stringify({ error: true, message: 'repoName is required' }) }],
+                            isError: true,
+                        };
+                    }
+                    const cloneResult = await forge.repoClone({ repoName, branchName, destPath });
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify({
+                                    repoName: cloneResult.repoName,
+                                    clonePath: cloneResult.clonePath,
+                                    hostClonePath: cloneResult.hostClonePath,
+                                    branch: cloneResult.branch,
+                                    message: `Clone created at ${cloneResult.hostClonePath} on branch '${cloneResult.branch}'. Work in this directory — it is isolated from the original repo.`,
+                                }, null, 2),
+                            }],
+                    };
+                }
                 case 'forge_workspace_create': {
                     const { config, configVersion, storyId, storyTitle, repos } = args;
                     const workspace = await forge.workspaceCreate({
@@ -389,30 +462,27 @@ function buildServer(workspaceRoot) {
                 }
                 case 'forge_workspace_list': {
                     const { status, storyId } = (args ?? {});
-                    const store = new core_2.WorkspaceMetadataStore();
                     if (storyId) {
-                        const record = await store.findByStoryId(storyId);
+                        const record = await forge.workspaceFindByStory(storyId);
                         return { content: [{ type: 'text', text: JSON.stringify(record ? [record] : [], null, 2) }] };
                     }
-                    const records = await store.list(status ? { status: status } : undefined);
+                    const records = await forge.workspaceList(status ? { status } : undefined);
                     return { content: [{ type: 'text', text: JSON.stringify(records, null, 2) }] };
                 }
                 case 'forge_workspace_delete': {
                     const { id, force } = args;
-                    const store = new core_2.WorkspaceMetadataStore();
-                    const record = await store.get(id);
+                    const record = await forge.workspaceStatus(id);
                     if (!record) {
                         return {
                             content: [{ type: 'text', text: JSON.stringify({ error: true, code: 'WORKSPACE_NOT_FOUND', message: `Workspace '${id}' not found` }, null, 2) }],
                         };
                     }
-                    await store.delete(id);
+                    await forge.workspaceDelete(id, { force });
                     return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: `Workspace '${id}' deleted` }, null, 2) }] };
                 }
                 case 'forge_workspace_status': {
                     const { id } = args;
-                    const store = new core_2.WorkspaceMetadataStore();
-                    const record = await store.get(id);
+                    const record = await forge.workspaceStatus(id);
                     if (!record) {
                         return {
                             content: [{ type: 'text', text: JSON.stringify({ error: true, code: 'WORKSPACE_NOT_FOUND', message: `Workspace '${id}' not found` }, null, 2) }],
@@ -477,8 +547,18 @@ async function startMcpServerHttp(opts) {
         try {
             const sessionId = req.headers['mcp-session-id'];
             let transport = sessionId ? sessions.get(sessionId) : undefined;
+            if (sessionId && !transport) {
+                // Session ID provided but unknown (e.g. server restarted, session expired).
+                // Per MCP spec: return 404 so the client can reinitialize cleanly.
+                // Without this guard, we'd create a new uninitialized transport for every
+                // stale request, leaking memory and potentially leaving requests unanswered.
+                log('warn', 'Unknown session ID — returning 404', { sessionId });
+                res.writeHead(404, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Session not found' }));
+                return;
+            }
             if (!transport) {
-                // New session: create a fresh server and transport instance
+                // No session ID = new session request (initialize handshake).
                 const server = buildServer(workspaceRoot);
                 transport = new streamableHttp_js_1.StreamableHTTPServerTransport({
                     sessionIdGenerator: () => (0, node_crypto_1.randomUUID)(),

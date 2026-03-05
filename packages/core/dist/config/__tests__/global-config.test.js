@@ -212,7 +212,7 @@ const global_config_js_1 = require("../../models/global-config.js");
                 registries: [
                     { type: 'filesystem', name: 'local', path: '/some/path' },
                 ],
-                workspace: { mount_path: '~/workspaces', default_config: 'default', retention_days: 30 },
+                workspace: { mount_path: '~/workspaces', default_config: 'default', retention_days: 30, store_path: '~/.forge/workspaces.json' },
                 mcp_endpoints: {},
                 repos: { scan_paths: [], index_path: '~/.forge/repos.json' },
             }, nestedPath);
@@ -279,7 +279,7 @@ const global_config_js_1 = require("../../models/global-config.js");
             // Set up initial config
             await (0, index_js_1.saveGlobalConfig)({
                 registries: [],
-                workspace: { mount_path: '~/workspaces', default_config: 'custom', retention_days: 60 },
+                workspace: { mount_path: '~/workspaces', default_config: 'custom', retention_days: 60, store_path: '~/.forge/workspaces.json' },
                 mcp_endpoints: {},
                 repos: { scan_paths: [], index_path: '~/.forge/repos.json' },
             }, configPath);
@@ -313,7 +313,7 @@ const global_config_js_1 = require("../../models/global-config.js");
                 registries: [
                     { type: 'filesystem', name: 'local', path: '/registry' },
                 ],
-                workspace: { mount_path: '~/workspaces', default_config: 'custom', retention_days: 50 },
+                workspace: { mount_path: '~/workspaces', default_config: 'custom', retention_days: 50, store_path: '~/.forge/workspaces.json' },
                 mcp_endpoints: {},
                 repos: { scan_paths: [], index_path: '~/.forge/repos.json' },
             }, configPath);

@@ -149,6 +149,17 @@ class FilesystemAdapter {
             await fs_1.promises.writeFile(contentPath, bundle.content, 'utf-8');
         }
     }
+    async readResourceFile(type, id, relativePath) {
+        const filePath = path_1.default.join(this.artifactDir(type, id), relativePath);
+        try {
+            return await fs_1.promises.readFile(filePath, 'utf-8');
+        }
+        catch (err) {
+            if (err.code === 'ENOENT')
+                return null;
+            throw err;
+        }
+    }
 }
 exports.FilesystemAdapter = FilesystemAdapter;
 //# sourceMappingURL=filesystem-adapter.js.map

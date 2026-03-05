@@ -6,26 +6,27 @@ export interface McpServerEntry {
     url: string;
 }
 /**
- * Emit the mcp-remote wrapper script to {workspacePath}/.claude/bin/mcp-remote-wrapper.
- * Idempotent — safe to call on every workspace creation.
- * Returns the path to the wrapper (Docker-internal path).
- */
-export declare function emitMcpRemoteWrapper(workspacePath: string): Promise<string>;
-/**
  * Merge the given MCP server entries into {workspacePath}/.claude/settings.local.json
- * using the managed wrapper script. Preserves all existing settings.
+ * using Claude Code's native HTTP transport. Preserves all existing settings.
  *
  * Writes to settings.local.json (machine-specific, gitignored) because it contains
- * absolute host paths and localhost URLs that differ per machine.
- *
- * The workspacePath is the Docker-internal path (e.g., /data/workspaces/...).
- * The hostWorkspacePath is the host-side equivalent (e.g., /Users/me/.../workspaces/...).
- * These differ when Forge runs in Docker; pass the same value for native installs.
+ * localhost URLs that differ per machine.
  *
  * Each entry produces a mcpServers record like:
- *   "anvil": { "command": "/host/path/.claude/bin/mcp-remote-wrapper", "args": ["http://localhost:8100", "--transport", "http"] }
+ *   "anvil": { "type": "http", "url": "http://localhost:8100/mcp" }
+ *
+ * This replaces the previous mcp-remote wrapper approach.  Claude Code natively
+ * supports Streamable HTTP via `type: "http"`, which eliminates the mcp-remote
+ * middleman process entirely — fixing both the process-leak bug (orphaned
+ * mcp-remote processes after session end) and the TCP-hang bug (fetch() with no
+ * per-request timeout after macOS sleep/wake).
  */
-export declare function updateClaudeMcpServers(servers: McpServerEntry[], workspacePath: string, hostWorkspacePath: string): Promise<void>;
+export declare function updateClaudeMcpServers(servers: McpServerEntry[], workspacePath: string, _hostWorkspacePath?: string): Promise<void>;
+/**
+ * @deprecated No longer needed — native HTTP transport eliminates mcp-remote.
+ * Retained to avoid breaking any code that imports this function.
+ */
+export declare function emitMcpRemoteWrapper(workspacePath: string): Promise<string>;
 /**
  * @deprecated Use updateClaudeMcpServers with explicit workspacePath and hostWorkspacePath.
  * Retained as a no-op shim to avoid breaking any code that imports WRAPPER_PATH.

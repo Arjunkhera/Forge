@@ -13,16 +13,25 @@ export declare const WorkspaceSettingsSchema: z.ZodObject<{
      * Used to emit correct absolute paths into .claude/settings.local.json
      * so Claude Code on the host can resolve the wrapper script and URLs.
      */
+    /**
+     * Path to the workspace metadata store file (workspaces.json).
+     * Defaults to ~/.forge/workspaces.json (suitable for standalone/host use).
+     * Override to a volume-mounted path when running in Docker so metadata
+     * survives container restarts (e.g., /data/workspaces/workspaces.json).
+     */
+    store_path: z.ZodDefault<z.ZodString>;
     host_workspaces_path: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     retention_days: number;
     mount_path: string;
     default_config: string;
+    store_path: string;
     host_workspaces_path?: string | undefined;
 }, {
     retention_days?: number | undefined;
     mount_path?: string | undefined;
     default_config?: string | undefined;
+    store_path?: string | undefined;
     host_workspaces_path?: string | undefined;
 }>;
 export type WorkspaceSettings = z.infer<typeof WorkspaceSettingsSchema>;
@@ -129,12 +138,22 @@ export type HostEndpoints = z.infer<typeof HostEndpointsSchema>;
 export declare const ReposConfigSchema: z.ZodObject<{
     scan_paths: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
     index_path: z.ZodDefault<z.ZodString>;
+    /**
+     * Host-side absolute path corresponding to the first scan_path.
+     * Only needed when Forge runs inside Docker and the repos directory is
+     * bind-mounted from the host (e.g., ${HOST_REPOS_PATH}:/data/repos).
+     * When set, localPath in repo results is translated from the container
+     * path to the equivalent host path so callers can access repos directly.
+     */
+    host_repos_path: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     scan_paths: string[];
     index_path: string;
+    host_repos_path?: string | undefined;
 }, {
     scan_paths?: string[] | undefined;
     index_path?: string | undefined;
+    host_repos_path?: string | undefined;
 }>;
 export type ReposConfig = z.infer<typeof ReposConfigSchema>;
 /**
@@ -174,6 +193,23 @@ export type ReposConfig = z.infer<typeof ReposConfigSchema>;
  *     - ~/Repositories
  *   index_path: ~/.forge/repos.json
  */
+/**
+ * Tracks a globally installed plugin.
+ */
+export declare const GlobalPluginEntrySchema: z.ZodObject<{
+    version: z.ZodString;
+    installed_at: z.ZodString;
+    files: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
+}, "strip", z.ZodTypeAny, {
+    version: string;
+    files: string[];
+    installed_at: string;
+}, {
+    version: string;
+    installed_at: string;
+    files?: string[] | undefined;
+}>;
+export type GlobalPluginEntry = z.infer<typeof GlobalPluginEntrySchema>;
 export declare const GlobalConfigSchema: z.ZodObject<{
     registries: z.ZodDefault<z.ZodArray<z.ZodDiscriminatedUnion<"type", [z.ZodObject<{
         type: z.ZodLiteral<"filesystem">;
@@ -232,16 +268,25 @@ export declare const GlobalConfigSchema: z.ZodObject<{
          * Used to emit correct absolute paths into .claude/settings.local.json
          * so Claude Code on the host can resolve the wrapper script and URLs.
          */
+        /**
+         * Path to the workspace metadata store file (workspaces.json).
+         * Defaults to ~/.forge/workspaces.json (suitable for standalone/host use).
+         * Override to a volume-mounted path when running in Docker so metadata
+         * survives container restarts (e.g., /data/workspaces/workspaces.json).
+         */
+        store_path: z.ZodDefault<z.ZodString>;
         host_workspaces_path: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
         retention_days: number;
         mount_path: string;
         default_config: string;
+        store_path: string;
         host_workspaces_path?: string | undefined;
     }, {
         retention_days?: number | undefined;
         mount_path?: string | undefined;
         default_config?: string | undefined;
+        store_path?: string | undefined;
         host_workspaces_path?: string | undefined;
     }>>;
     mcp_endpoints: z.ZodDefault<z.ZodObject<{
@@ -318,13 +363,36 @@ export declare const GlobalConfigSchema: z.ZodObject<{
     repos: z.ZodDefault<z.ZodObject<{
         scan_paths: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
         index_path: z.ZodDefault<z.ZodString>;
+        /**
+         * Host-side absolute path corresponding to the first scan_path.
+         * Only needed when Forge runs inside Docker and the repos directory is
+         * bind-mounted from the host (e.g., ${HOST_REPOS_PATH}:/data/repos).
+         * When set, localPath in repo results is translated from the container
+         * path to the equivalent host path so callers can access repos directly.
+         */
+        host_repos_path: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
         scan_paths: string[];
         index_path: string;
+        host_repos_path?: string | undefined;
     }, {
         scan_paths?: string[] | undefined;
         index_path?: string | undefined;
+        host_repos_path?: string | undefined;
     }>>;
+    global_plugins: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodObject<{
+        version: z.ZodString;
+        installed_at: z.ZodString;
+        files: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
+    }, "strip", z.ZodTypeAny, {
+        version: string;
+        files: string[];
+        installed_at: string;
+    }, {
+        version: string;
+        installed_at: string;
+        files?: string[] | undefined;
+    }>>>;
 }, "strip", z.ZodTypeAny, {
     registries: ({
         name: string;
@@ -346,6 +414,7 @@ export declare const GlobalConfigSchema: z.ZodObject<{
         retention_days: number;
         mount_path: string;
         default_config: string;
+        store_path: string;
         host_workspaces_path?: string | undefined;
     };
     mcp_endpoints: {
@@ -365,7 +434,13 @@ export declare const GlobalConfigSchema: z.ZodObject<{
     repos: {
         scan_paths: string[];
         index_path: string;
+        host_repos_path?: string | undefined;
     };
+    global_plugins: Record<string, {
+        version: string;
+        files: string[];
+        installed_at: string;
+    }>;
     host_endpoints?: {
         anvil?: string | undefined;
         vault?: string | undefined;
@@ -392,6 +467,7 @@ export declare const GlobalConfigSchema: z.ZodObject<{
         retention_days?: number | undefined;
         mount_path?: string | undefined;
         default_config?: string | undefined;
+        store_path?: string | undefined;
         host_workspaces_path?: string | undefined;
     } | undefined;
     mcp_endpoints?: {
@@ -416,7 +492,13 @@ export declare const GlobalConfigSchema: z.ZodObject<{
     repos?: {
         scan_paths?: string[] | undefined;
         index_path?: string | undefined;
+        host_repos_path?: string | undefined;
     } | undefined;
+    global_plugins?: Record<string, {
+        version: string;
+        installed_at: string;
+        files?: string[] | undefined;
+    }> | undefined;
 }>;
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 //# sourceMappingURL=global-config.d.ts.map

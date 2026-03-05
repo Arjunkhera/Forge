@@ -5,11 +5,11 @@ import os from 'os';
 import {
   WorkspaceCreator,
   WorkspaceCreateError,
-  createReferenceClone,
   slugify,
   generateBranchName,
   type WorkspaceCreateOptions,
 } from '../workspace-creator.js';
+import { createReferenceClone } from '../../repo/repo-clone.js';
 
 describe('workspace-creator helpers', () => {
   describe('slugify()', () => {

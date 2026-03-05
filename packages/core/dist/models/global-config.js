@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.GlobalConfigSchema = exports.ReposConfigSchema = exports.HostEndpointsSchema = exports.McpEndpointsSchema = exports.McpEndpointSchema = exports.WorkspaceSettingsSchema = void 0;
+exports.GlobalConfigSchema = exports.GlobalPluginEntrySchema = exports.ReposConfigSchema = exports.HostEndpointsSchema = exports.McpEndpointsSchema = exports.McpEndpointSchema = exports.WorkspaceSettingsSchema = void 0;
 const zod_1 = require("zod");
 const forge_config_js_1 = require("./forge-config.js");
 /**
@@ -17,6 +17,13 @@ exports.WorkspaceSettingsSchema = zod_1.z.object({
      * Used to emit correct absolute paths into .claude/settings.local.json
      * so Claude Code on the host can resolve the wrapper script and URLs.
      */
+    /**
+     * Path to the workspace metadata store file (workspaces.json).
+     * Defaults to ~/.forge/workspaces.json (suitable for standalone/host use).
+     * Override to a volume-mounted path when running in Docker so metadata
+     * survives container restarts (e.g., /data/workspaces/workspaces.json).
+     */
+    store_path: zod_1.z.string().default('~/.forge/workspaces.json'),
     host_workspaces_path: zod_1.z.string().optional(),
 });
 /**
@@ -52,6 +59,14 @@ exports.HostEndpointsSchema = zod_1.z.object({
 exports.ReposConfigSchema = zod_1.z.object({
     scan_paths: zod_1.z.array(zod_1.z.string()).default([]),
     index_path: zod_1.z.string().default('~/.forge/repos.json'),
+    /**
+     * Host-side absolute path corresponding to the first scan_path.
+     * Only needed when Forge runs inside Docker and the repos directory is
+     * bind-mounted from the host (e.g., ${HOST_REPOS_PATH}:/data/repos).
+     * When set, localPath in repo results is translated from the container
+     * path to the equivalent host path so callers can access repos directly.
+     */
+    host_repos_path: zod_1.z.string().optional(),
 });
 /**
  * Schema for the global Forge configuration (~/.forge/config.yaml).
@@ -90,11 +105,20 @@ exports.ReposConfigSchema = zod_1.z.object({
  *     - ~/Repositories
  *   index_path: ~/.forge/repos.json
  */
+/**
+ * Tracks a globally installed plugin.
+ */
+exports.GlobalPluginEntrySchema = zod_1.z.object({
+    version: zod_1.z.string(),
+    installed_at: zod_1.z.string(),
+    files: zod_1.z.array(zod_1.z.string()).default([]),
+});
 exports.GlobalConfigSchema = zod_1.z.object({
     registries: zod_1.z.array(forge_config_js_1.RegistryConfigSchema).default([]),
     workspace: exports.WorkspaceSettingsSchema.default({}),
     mcp_endpoints: exports.McpEndpointsSchema.default({}),
     host_endpoints: exports.HostEndpointsSchema.optional(),
     repos: exports.ReposConfigSchema.default({}),
+    global_plugins: zod_1.z.record(zod_1.z.string(), exports.GlobalPluginEntrySchema).default({}),
 });
 //# sourceMappingURL=global-config.js.map
