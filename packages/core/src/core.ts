@@ -37,6 +37,8 @@ import { scan as repoScannerScan } from './repo/repo-scanner.js';
 import { loadRepoIndex, saveRepoIndex } from './repo/repo-index-store.js';
 import { RepoIndexQuery } from './repo/repo-index-query.js';
 import { VaultClient, extractHostingFromUrl } from './vault/vault-client.js';
+import { createReferenceClone, type RepoCloneResult } from './repo/repo-clone.js';
+import { expandPath } from './config/path-utils.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -465,6 +467,59 @@ export class ForgeCore {
       hosting: { hostname: 'github.com', org: '' },
       workflow: { strategy: 'direct', defaultBranch: 'main', prTarget: 'main' },
       source: 'default',
+    };
+  }
+
+  /**
+   * Create an isolated reference clone of a repository.
+   *
+   * Looks up the repo in the local index, creates a reference clone at
+   * destPath (default: <mountPath>/<repoName>-clone-<shortId>), optionally
+   * creates a feature branch, and returns paths in host-translated form.
+   */
+  async repoClone(opts: {
+    repoName: string;
+    branchName?: string;
+    destPath?: string;
+  }): Promise<RepoCloneResult> {
+    const globalConfig = await loadGlobalConfig(this.globalConfigPath);
+    const { scan_paths, host_repos_path } = globalConfig.repos;
+
+    const repoIndex = await loadRepoIndex(globalConfig.repos.index_path);
+    if (!repoIndex) {
+      throw new ForgeError('REPO_INDEX_NOT_FOUND', 'Repository index not found.', 'Run: forge repo scan');
+    }
+
+    const query = new RepoIndexQuery(repoIndex.repos);
+    const repo = query.findByName(opts.repoName);
+    if (!repo) {
+      throw new ForgeError('REPO_NOT_FOUND', `Repository "${opts.repoName}" not found in local index.`, 'Run: forge repo scan');
+    }
+
+    const mountPath = expandPath(globalConfig.workspace.mount_path);
+    const shortId = Math.random().toString(36).slice(2, 10);
+    const clonePath = opts.destPath ?? path.join(mountPath, `${opts.repoName}-clone-${shortId}`);
+
+    await createReferenceClone({
+      localPath: repo.localPath,
+      remoteUrl: repo.remoteUrl,
+      destPath: clonePath,
+      branchName: opts.branchName,
+      defaultBranch: repo.defaultBranch,
+    });
+
+    const translatedRepo = translateRepoPath(repo, scan_paths, host_repos_path);
+
+    // Compute host-side clone path for display (Docker path → host path)
+    const hostMountPath = globalConfig.workspace.host_workspaces_path ?? mountPath;
+    const cloneRelative = path.relative(mountPath, clonePath);
+    const hostClonePath = path.join(hostMountPath, cloneRelative);
+
+    return {
+      repoName: opts.repoName,
+      clonePath,
+      hostClonePath,
+      branch: opts.branchName ?? repo.defaultBranch,
     };
   }
 

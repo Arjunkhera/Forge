@@ -126,11 +126,37 @@ async function detectFramework(repoPath) {
     }
 }
 /**
- * Read the default branch name from .git/HEAD file.
- * The HEAD file typically contains: ref: refs/heads/main
- * Extracts and returns just the branch name (e.g., 'main')
+ * Read the default branch name for a repository.
+ *
+ * Resolution order:
+ * 1. refs/remotes/origin/HEAD — reflects what the remote considers its default (most reliable)
+ * 2. .git/HEAD file — current checkout (fallback; wrong when on a feature branch)
+ * 3. git symbolic-ref HEAD — same caveat as above
  */
 async function readDefaultBranch(repoPath) {
+    // Tier 1: remote's default via origin/HEAD symbolic ref
+    try {
+        const originHead = path_1.default.join(repoPath, '.git', 'refs', 'remotes', 'origin', 'HEAD');
+        const content = await fs_1.promises.readFile(originHead, 'utf-8');
+        const match = content.trim().match(/refs\/remotes\/origin\/(.+)$/);
+        if (match && match[1]) {
+            return match[1];
+        }
+    }
+    catch {
+        // origin/HEAD not set — try git command
+    }
+    // Try git symbolic-ref for origin/HEAD (works even without the file if remote was fetched)
+    try {
+        const branch = await runGit(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], repoPath);
+        // output is "origin/main" — strip the "origin/" prefix
+        if (branch)
+            return branch.replace(/^origin\//, '');
+    }
+    catch {
+        // No origin/HEAD configured — fall through to local HEAD
+    }
+    // Tier 2: current checkout (inaccurate on feature branches, but better than nothing)
     try {
         const headPath = path_1.default.join(repoPath, '.git', 'HEAD');
         const content = await fs_1.promises.readFile(headPath, 'utf-8');
@@ -140,11 +166,9 @@ async function readDefaultBranch(repoPath) {
         }
     }
     catch {
-        // Fall back to git command
+        // Detached HEAD or error
     }
-    // Fall back to git symbolic-ref command
-    const branch = await runGit(['symbolic-ref', '--short', 'HEAD'], repoPath);
-    return branch || 'main'; // Default to 'main' if unable to determine
+    return 'main';
 }
 /**
  * Index metadata for a single repository.

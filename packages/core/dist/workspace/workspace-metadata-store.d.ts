@@ -3,7 +3,7 @@ export declare const WORKSPACES_FILE = "workspaces.json";
 export declare function generateWorkspaceId(): string;
 export declare class WorkspaceMetadataStore {
     private storePath;
-    constructor(forgeDir?: string);
+    constructor(storePath?: string);
     withPath(storePath: string): WorkspaceMetadataStore;
     /**
      * Load workspace store from disk. Returns empty store if file missing.

@@ -1,9 +1,8 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import type { ForgeCore } from '../core.js';
 import { translateRepoPath } from '../core.js';
+import { createReferenceClone } from '../repo/repo-clone.js';
 import type {
   WorkspaceRecord,
   WorkspaceRepo,
@@ -17,8 +16,6 @@ import { expandPath } from '../config/path-utils.js';
 import { loadRepoIndex } from '../repo/repo-index-store.js';
 import { RepoIndexQuery } from '../repo/repo-index-query.js';
 import { updateClaudeMcpServers, type McpServerEntry } from './mcp-settings-writer.js';
-
-const execFileAsync = promisify(execFile);
 
 /**
  * Options for creating a new workspace.
@@ -77,81 +74,6 @@ export function generateBranchName(
   // Clean up double slashes
   result = result.replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
   return result || 'workspace';
-}
-
-/**
- * Helper: Create a reference clone of a repository.
- *
- * Uses `git clone --reference <localPath>` to reuse local objects for speed
- * while fetching from the remote URL for freshness and full isolation.
- * Falls back to a plain local clone when no remoteUrl is available, or when
- * the remote URL is unreachable (e.g. inside Docker without SSH access).
- */
-export async function createReferenceClone(opts: {
-  localPath: string;     // local clone path — used as --reference for speed
-  remoteUrl: string | null; // remote URL to fetch from; null → local-only clone
-  destPath: string;      // destination path for the new clone
-  branchName: string;    // feature branch to create
-  defaultBranch: string; // remote base branch (e.g. 'main')
-}): Promise<void> {
-  const runGit = async (args: string[], cwd: string): Promise<string> => {
-    const { stdout } = await execFileAsync('git', args, { cwd, timeout: 60000 });
-    return stdout.trim();
-  };
-
-  const checkoutBranch = async (base: string): Promise<void> => {
-    try {
-      await runGit(['checkout', '-b', opts.branchName, base], opts.destPath);
-    } catch (err: any) {
-      // Branch already exists — check it out instead
-      if ((err.message || '').includes('already exists')) {
-        await runGit(['checkout', opts.branchName], opts.destPath);
-      } else {
-        throw err;
-      }
-    }
-  };
-
-  const cloneLocalOnly = async (): Promise<void> => {
-    await runGit(['clone', opts.localPath, opts.destPath], path.dirname(opts.destPath));
-    await checkoutBranch(opts.defaultBranch);
-  };
-
-  if (!opts.remoteUrl) {
-    try {
-      await cloneLocalOnly();
-    } catch (err: any) {
-      throw new WorkspaceCreateError(
-        `Failed to create reference clone at ${opts.destPath}: ${err.message}`,
-        'Check that the remote URL is accessible and the local repo path is valid',
-      );
-    }
-    return;
-  }
-
-  // Remote URL is set — try reference clone from remote first
-  try {
-    await runGit(
-      ['clone', '--reference', opts.localPath, opts.remoteUrl, opts.destPath],
-      path.dirname(opts.destPath),
-    );
-    await checkoutBranch(`origin/${opts.defaultBranch}`);
-    return;
-  } catch {
-    // Remote clone failed — fall back to local-only clone
-  }
-
-  // Local-only fallback (e.g. Docker without SSH/network access)
-  try {
-    // Clean up any partial clone directory before retrying
-    await fs.rm(opts.destPath, { recursive: true, force: true }).catch(() => {});
-    await cloneLocalOnly();
-  } catch (err: any) {
-    throw new WorkspaceCreateError(
-      `Failed to create reference clone at ${opts.destPath}: ${err.message}`,
-      'Check that the local repo path is valid',
-    );
-  }
 }
 
 /**

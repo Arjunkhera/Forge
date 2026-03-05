@@ -157,6 +157,28 @@ const TOOLS = [
     },
   },
   {
+    name: 'forge_repo_clone',
+    description: 'Create an isolated working copy (reference clone) of a repository. The clone gets its own feature branch, independent of the original. Use this to get a safe working directory before making code changes to any repo.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        repoName: {
+          type: 'string',
+          description: 'Repository name from the local index (use forge_repo_list to discover)',
+        },
+        branchName: {
+          type: 'string',
+          description: 'Feature branch to create in the clone (optional). If omitted, stays on the default branch.',
+        },
+        destPath: {
+          type: 'string',
+          description: 'Override destination path for the clone (optional). Defaults to <mountPath>/<repoName>-clone-<id>.',
+        },
+      },
+      required: ['repoName'],
+    },
+  },
+  {
     name: 'forge_workspace_create',
     description: 'Create a new workspace from a workspace config. Installs plugins, creates git worktrees, and emits MCP configs and environment variables.',
     inputSchema: {
@@ -385,6 +407,33 @@ function buildServer(workspaceRoot: string): Server {
             content: [{
               type: 'text',
               text: JSON.stringify(workflow, null, 2),
+            }],
+          };
+        }
+
+        case 'forge_repo_clone': {
+          const { repoName, branchName, destPath } = (args ?? {}) as {
+            repoName: string;
+            branchName?: string;
+            destPath?: string;
+          };
+          if (!repoName) {
+            return {
+              content: [{ type: 'text', text: JSON.stringify({ error: true, message: 'repoName is required' }) }],
+              isError: true,
+            };
+          }
+          const cloneResult = await forge.repoClone({ repoName, branchName, destPath });
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                repoName: cloneResult.repoName,
+                clonePath: cloneResult.clonePath,
+                hostClonePath: cloneResult.hostClonePath,
+                branch: cloneResult.branch,
+                message: `Clone created at ${cloneResult.hostClonePath} on branch '${cloneResult.branch}'. Work in this directory — it is isolated from the original repo.`,
+              }, null, 2),
             }],
           };
         }

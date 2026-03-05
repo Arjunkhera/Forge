@@ -35,6 +35,9 @@ async function loadGlobalConfig(configPath = exports.GLOBAL_CONFIG_PATH) {
         if (config.workspace.mount_path) {
             config.workspace.mount_path = (0, path_utils_js_1.expandPath)(config.workspace.mount_path);
         }
+        if (config.workspace.store_path) {
+            config.workspace.store_path = (0, path_utils_js_1.expandPath)(config.workspace.store_path);
+        }
         if (config.repos.index_path) {
             config.repos.index_path = (0, path_utils_js_1.expandPath)(config.repos.index_path);
         }

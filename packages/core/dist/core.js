@@ -4,7 +4,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Registry = exports.ForgeCore = void 0;
+exports.translateRepoPath = translateRepoPath;
+const fs_1 = require("fs");
+const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
+const child_process_1 = require("child_process");
+const util_1 = require("util");
 const workspace_manager_js_1 = require("./workspace/workspace-manager.js");
 const workspace_creator_js_1 = require("./workspace/workspace-creator.js");
 const workspace_lifecycle_js_1 = require("./workspace/workspace-lifecycle.js");
@@ -13,6 +18,8 @@ const registry_js_1 = require("./registry/registry.js");
 const resolver_js_1 = require("./resolver/resolver.js");
 const compiler_js_1 = require("./compiler/compiler.js");
 const claude_code_strategy_js_1 = require("./compiler/claude-code-strategy.js");
+const global_claude_code_strategy_js_1 = require("./compiler/global-claude-code-strategy.js");
+const claude_md_writer_js_1 = require("./compiler/claude-md-writer.js");
 const filesystem_adapter_js_1 = require("./adapters/filesystem-adapter.js");
 const composite_adapter_js_1 = require("./adapters/composite-adapter.js");
 const git_adapter_js_1 = require("./adapters/git-adapter.js");
@@ -21,21 +28,55 @@ const global_config_loader_js_1 = require("./config/global-config-loader.js");
 const repo_scanner_js_1 = require("./repo/repo-scanner.js");
 const repo_index_store_js_1 = require("./repo/repo-index-store.js");
 const repo_index_query_js_1 = require("./repo/repo-index-query.js");
+const vault_client_js_1 = require("./vault/vault-client.js");
+const repo_clone_js_1 = require("./repo/repo-clone.js");
+const path_utils_js_1 = require("./config/path-utils.js");
+const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
+/**
+ * Translate a Docker-internal repo localPath to the equivalent host path.
+ * Returns the entry unchanged if host_repos_path is not configured or
+ * the localPath doesn't start with any of the configured scan_paths.
+ */
+function translateRepoPath(entry, scanPaths, hostReposPath) {
+    if (!hostReposPath)
+        return entry;
+    for (const scanPath of scanPaths) {
+        const prefix = scanPath.endsWith('/') ? scanPath : scanPath + '/';
+        if (entry.localPath === scanPath || entry.localPath.startsWith(prefix)) {
+            const relative = entry.localPath.slice(scanPath.length);
+            const hostBase = hostReposPath.endsWith('/') ? hostReposPath.slice(0, -1) : hostReposPath;
+            return { ...entry, localPath: hostBase + relative };
+        }
+    }
+    return entry;
+}
 class ForgeCore {
     workspaceRoot;
     workspaceManager;
     compiler;
     globalConfigPath;
-    lifecycleManager;
-    metadataStore;
+    _metadataStore;
+    _lifecycleManager;
     constructor(workspaceRoot = process.cwd(), options) {
         this.workspaceRoot = workspaceRoot;
         this.workspaceManager = new workspace_manager_js_1.WorkspaceManager(workspaceRoot);
         this.compiler = new compiler_js_1.Compiler();
         this.compiler.register(new claude_code_strategy_js_1.ClaudeCodeStrategy());
         this.globalConfigPath = options?.globalConfigPath;
-        this.metadataStore = new workspace_metadata_store_js_1.WorkspaceMetadataStore();
-        this.lifecycleManager = new workspace_lifecycle_js_1.WorkspaceLifecycleManager(undefined, this.metadataStore);
+    }
+    async getMetadataStore() {
+        if (!this._metadataStore) {
+            const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
+            this._metadataStore = new workspace_metadata_store_js_1.WorkspaceMetadataStore(globalConfig.workspace.store_path);
+        }
+        return this._metadataStore;
+    }
+    async getLifecycleManager() {
+        if (!this._lifecycleManager) {
+            const store = await this.getMetadataStore();
+            this._lifecycleManager = new workspace_lifecycle_js_1.WorkspaceLifecycleManager(undefined, store);
+        }
+        return this._lifecycleManager;
     }
     /**
      * Initialize a new Forge workspace.
@@ -229,7 +270,7 @@ class ForgeCore {
      */
     async repoList(query) {
         const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
-        const { index_path, scan_paths } = globalConfig.repos;
+        const { index_path, scan_paths, host_repos_path } = globalConfig.repos;
         let index = await (0, repo_index_store_js_1.loadRepoIndex)(index_path);
         // Auto-scan if no index exists and scan_paths configured
         if (!index && scan_paths.length > 0) {
@@ -239,7 +280,8 @@ class ForgeCore {
         if (!index)
             return [];
         const query_obj = new repo_index_query_js_1.RepoIndexQuery(index.repos);
-        return query ? query_obj.search(query) : query_obj.listAll();
+        const results = query ? query_obj.search(query) : query_obj.listAll();
+        return results.map(r => translateRepoPath(r, scan_paths, host_repos_path));
     }
     /**
      * Resolve a repository by name or remote URL.
@@ -249,7 +291,7 @@ class ForgeCore {
             throw new Error('Either name or remoteUrl must be provided');
         }
         const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
-        const { index_path, scan_paths } = globalConfig.repos;
+        const { index_path, scan_paths, host_repos_path } = globalConfig.repos;
         let index = await (0, repo_index_store_js_1.loadRepoIndex)(index_path);
         // Auto-scan if no index exists
         if (!index && scan_paths.length > 0) {
@@ -259,11 +301,116 @@ class ForgeCore {
         if (!index)
             return null;
         const q = new repo_index_query_js_1.RepoIndexQuery(index.repos);
+        let entry = null;
         if (opts.name)
-            return q.findByName(opts.name);
-        if (opts.remoteUrl)
-            return q.findByRemoteUrl(opts.remoteUrl);
-        return null;
+            entry = q.findByName(opts.name);
+        else if (opts.remoteUrl)
+            entry = q.findByRemoteUrl(opts.remoteUrl);
+        return entry ? translateRepoPath(entry, scan_paths, host_repos_path) : null;
+    }
+    /**
+     * Resolve the git workflow configuration for a repository.
+     *
+     * Resolution order:
+     *   1. Vault repo profile  — shared, team-wide knowledge (hosting + workflow fields)
+     *   2. Auto-detect         — inspect local git remotes (upstream → fork, else direct)
+     *   3. Default fallback    — direct strategy, main branch
+     */
+    async repoWorkflow(repoName) {
+        const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
+        const vaultEndpoint = globalConfig.mcp_endpoints.vault;
+        // --- Tier 1: Vault repo profile ---
+        if (vaultEndpoint) {
+            try {
+                const client = new vault_client_js_1.VaultClient(vaultEndpoint.url);
+                const profile = await client.fetchRepoProfile(repoName);
+                if (profile?.workflow?.strategy) {
+                    const strategy = profile.workflow.strategy;
+                    const defaultBranch = profile.workflow['default-branch'] ?? 'main';
+                    return {
+                        repoName,
+                        hosting: {
+                            hostname: profile.hosting?.hostname ?? 'github.com',
+                            org: profile.hosting?.org ?? '',
+                        },
+                        workflow: {
+                            strategy,
+                            defaultBranch,
+                            prTarget: profile.workflow['pr-target'] ?? defaultBranch,
+                            branchConvention: profile.workflow['branch-convention'],
+                        },
+                        source: 'vault',
+                    };
+                }
+            }
+            catch {
+                // Vault unreachable — fall through to auto-detect
+            }
+        }
+        // --- Tier 2: Auto-detect from local git remotes ---
+        const repo = await this.repoResolve({ name: repoName });
+        if (repo) {
+            const strategy = await this._detectWorkflowStrategy(repo.localPath);
+            const hosting = (0, vault_client_js_1.extractHostingFromUrl)(repo.remoteUrl);
+            return {
+                repoName,
+                hosting,
+                workflow: {
+                    strategy,
+                    defaultBranch: repo.defaultBranch,
+                    prTarget: repo.defaultBranch,
+                },
+                source: 'auto-detect',
+            };
+        }
+        // --- Tier 3: Default fallback ---
+        return {
+            repoName,
+            hosting: { hostname: 'github.com', org: '' },
+            workflow: { strategy: 'direct', defaultBranch: 'main', prTarget: 'main' },
+            source: 'default',
+        };
+    }
+    /**
+     * Create an isolated reference clone of a repository.
+     *
+     * Looks up the repo in the local index, creates a reference clone at
+     * destPath (default: <mountPath>/<repoName>-clone-<shortId>), optionally
+     * creates a feature branch, and returns paths in host-translated form.
+     */
+    async repoClone(opts) {
+        const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
+        const { scan_paths, host_repos_path } = globalConfig.repos;
+        const repoIndex = await (0, repo_index_store_js_1.loadRepoIndex)(globalConfig.repos.index_path);
+        if (!repoIndex) {
+            throw new errors_js_1.ForgeError('REPO_INDEX_NOT_FOUND', 'Repository index not found.', 'Run: forge repo scan');
+        }
+        const query = new repo_index_query_js_1.RepoIndexQuery(repoIndex.repos);
+        const repo = query.findByName(opts.repoName);
+        if (!repo) {
+            throw new errors_js_1.ForgeError('REPO_NOT_FOUND', `Repository "${opts.repoName}" not found in local index.`, 'Run: forge repo scan');
+        }
+        const mountPath = (0, path_utils_js_1.expandPath)(globalConfig.workspace.mount_path);
+        const shortId = Math.random().toString(36).slice(2, 10);
+        const clonePath = opts.destPath ?? path_1.default.join(mountPath, `${opts.repoName}-clone-${shortId}`);
+        await (0, repo_clone_js_1.createReferenceClone)({
+            localPath: repo.localPath,
+            remoteUrl: repo.remoteUrl,
+            destPath: clonePath,
+            branchName: opts.branchName,
+            defaultBranch: repo.defaultBranch,
+        });
+        const translatedRepo = translateRepoPath(repo, scan_paths, host_repos_path);
+        // Compute host-side clone path for display (Docker path → host path)
+        const hostMountPath = globalConfig.workspace.host_workspaces_path ?? mountPath;
+        const cloneRelative = path_1.default.relative(mountPath, clonePath);
+        const hostClonePath = path_1.default.join(hostMountPath, cloneRelative);
+        return {
+            repoName: opts.repoName,
+            clonePath,
+            hostClonePath,
+            branch: opts.branchName ?? repo.defaultBranch,
+        };
     }
     /**
      * Create a new workspace from a workspace config artifact.
@@ -278,38 +425,47 @@ class ForgeCore {
      * List workspaces, optionally filtered by status.
      */
     async workspaceList(filter) {
+        const store = await this.getMetadataStore();
         const filterObj = filter?.status ? { status: filter.status } : undefined;
-        return this.metadataStore.list(filterObj);
+        return store.list(filterObj);
+    }
+    /**
+     * Find the first workspace linked to a story ID. Returns null if not found.
+     */
+    async workspaceFindByStory(storyId) {
+        const store = await this.getMetadataStore();
+        return store.findByStoryId(storyId);
     }
     /**
      * Get status of a workspace.
      */
     async workspaceStatus(id) {
-        return this.metadataStore.get(id);
+        const store = await this.getMetadataStore();
+        return store.get(id);
     }
     /**
      * Pause a workspace.
      */
     async workspacePause(id) {
-        return this.lifecycleManager.pause(id);
+        return (await this.getLifecycleManager()).pause(id);
     }
     /**
      * Complete a workspace.
      */
     async workspaceComplete(id) {
-        return this.lifecycleManager.complete(id);
+        return (await this.getLifecycleManager()).complete(id);
     }
     /**
      * Delete a workspace.
      */
     async workspaceDelete(id, opts) {
-        return this.lifecycleManager.delete(id, opts);
+        return (await this.getLifecycleManager()).delete(id, opts);
     }
     /**
      * Archive a workspace.
      */
     async workspaceArchive(id) {
-        return this.lifecycleManager.archive(id);
+        return (await this.getLifecycleManager()).archive(id);
     }
     /**
      * Clean workspaces based on retention policy.
@@ -317,9 +473,186 @@ class ForgeCore {
     async workspaceClean(opts) {
         const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
         const retentionDays = globalConfig.workspace.retention_days;
-        return this.lifecycleManager.clean(retentionDays, opts);
+        return (await this.getLifecycleManager()).clean(retentionDays, opts);
+    }
+    // ─── Global Plugin Management ───
+    /**
+     * Install a plugin globally to ~/.claude/.
+     *
+     * 1. Resolves the plugin via the registry
+     * 2. Emits skills to ~/.claude/skills/ using GlobalClaudeCodeStrategy
+     * 3. Reads plugin's resources/rules/global-rules.md
+     * 4. Upserts a managed section in ~/.claude/CLAUDE.md
+     * 5. Tracks installed files in ~/.forge/config.yaml global_plugins
+     */
+    async installGlobal(ref) {
+        const parsed = this.parseRef(ref);
+        if (parsed.type !== 'plugin') {
+            throw new errors_js_1.ForgeError('INVALID_REF', `Global install only supports plugins, got '${parsed.type}'`, 'Use format: plugin:my-plugin@1.0.0');
+        }
+        const registry = await this.buildRegistry();
+        const resolver = new resolver_js_1.Resolver(registry);
+        resolver.reset();
+        const resolved = await resolver.resolve(parsed);
+        // Emit skills/agents to ~/.claude/ using global strategy
+        const claudeDir = path_1.default.join(os_1.default.homedir(), '.claude');
+        const globalStrategy = new global_claude_code_strategy_js_1.GlobalClaudeCodeStrategy(claudeDir);
+        const output = globalStrategy.emit(resolved);
+        const filesWritten = [];
+        for (const op of output.operations) {
+            const dir = path_1.default.dirname(op.path);
+            await fs_1.promises.mkdir(dir, { recursive: true });
+            await fs_1.promises.writeFile(op.path, op.content, 'utf-8');
+            filesWritten.push(op.path);
+        }
+        // Read plugin's global-rules.md resource file
+        let claudeMdUpdated = false;
+        const adapter = await this.findAdapterWithResource(registry, parsed);
+        if (adapter) {
+            const rulesContent = await adapter.readResourceFile('plugin', parsed.id, 'resources/rules/global-rules.md');
+            if (rulesContent) {
+                const claudeMdPath = path_1.default.join(claudeDir, 'CLAUDE.md');
+                let existing;
+                try {
+                    existing = await fs_1.promises.readFile(claudeMdPath, 'utf-8');
+                }
+                catch (err) {
+                    if (err.code !== 'ENOENT')
+                        throw err;
+                }
+                const updated = (0, claude_md_writer_js_1.upsertManagedSection)(existing, parsed.id, rulesContent);
+                await fs_1.promises.mkdir(claudeDir, { recursive: true });
+                await fs_1.promises.writeFile(claudeMdPath, updated, 'utf-8');
+                claudeMdUpdated = true;
+            }
+        }
+        // Track in global config
+        const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
+        globalConfig.global_plugins[parsed.id] = {
+            version: resolved.bundle.meta.version,
+            installed_at: new Date().toISOString(),
+            files: filesWritten,
+        };
+        await (0, global_config_loader_js_1.saveGlobalConfig)(globalConfig, this.globalConfigPath);
+        return {
+            pluginId: parsed.id,
+            version: resolved.bundle.meta.version,
+            filesWritten,
+            claudeMdUpdated,
+        };
+    }
+    /**
+     * Uninstall a globally installed plugin.
+     *
+     * 1. Reads tracked files from global_plugins
+     * 2. Deletes skill/agent files from ~/.claude/
+     * 3. Removes managed section from ~/.claude/CLAUDE.md
+     * 4. Removes entry from global config
+     */
+    async uninstallGlobal(pluginId) {
+        const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
+        const entry = globalConfig.global_plugins[pluginId];
+        if (!entry) {
+            throw new errors_js_1.ForgeError('NOT_FOUND', `Plugin '${pluginId}' is not globally installed`, 'Run: forge global list');
+        }
+        // Delete tracked files
+        for (const filePath of entry.files) {
+            try {
+                await fs_1.promises.unlink(filePath);
+                // Try to remove empty parent directories
+                const dir = path_1.default.dirname(filePath);
+                try {
+                    await fs_1.promises.rmdir(dir);
+                }
+                catch {
+                    // Directory not empty — fine
+                }
+            }
+            catch (err) {
+                if (err.code !== 'ENOENT') {
+                    console.warn(`[ForgeCore] Could not delete ${filePath}: ${err.message}`);
+                }
+            }
+        }
+        // Remove managed section from CLAUDE.md
+        const claudeMdPath = path_1.default.join(os_1.default.homedir(), '.claude', 'CLAUDE.md');
+        try {
+            const existing = await fs_1.promises.readFile(claudeMdPath, 'utf-8');
+            const updated = (0, claude_md_writer_js_1.removeManagedSection)(existing, pluginId);
+            await fs_1.promises.writeFile(claudeMdPath, updated, 'utf-8');
+        }
+        catch (err) {
+            if (err.code !== 'ENOENT') {
+                console.warn(`[ForgeCore] Could not update CLAUDE.md: ${err.message}`);
+            }
+        }
+        // Remove from global config
+        delete globalConfig.global_plugins[pluginId];
+        await (0, global_config_loader_js_1.saveGlobalConfig)(globalConfig, this.globalConfigPath);
+    }
+    /**
+     * List all globally installed plugins.
+     */
+    async listGlobal() {
+        const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
+        return Object.entries(globalConfig.global_plugins).map(([id, entry]) => ({
+            id,
+            version: entry.version,
+            installedAt: entry.installed_at,
+            files: entry.files,
+        }));
+    }
+    /**
+     * Find an adapter in the registry that supports readResourceFile for a given artifact.
+     */
+    async findAdapterWithResource(registry, ref) {
+        // Build adapters directly to access readResourceFile
+        let config = null;
+        try {
+            config = await this.workspaceManager.readConfig();
+        }
+        catch {
+            // No workspace config
+        }
+        const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
+        const registries = config
+            ? [...config.registries, ...globalConfig.registries.filter(r => !config.registries.some(cr => cr.name === r.name))]
+            : globalConfig.registries;
+        for (const reg of registries) {
+            try {
+                const adapter = this.buildAdapter(reg);
+                if (adapter.readResourceFile && await adapter.exists(ref.type, ref.id)) {
+                    return adapter;
+                }
+            }
+            catch {
+                // Skip failed adapters
+            }
+        }
+        return null;
     }
     // Internal helpers
+    /**
+     * Detect git workflow strategy from a repo's local remotes.
+     *
+     * - Has an 'upstream' remote → fork strategy (push to origin fork, PR against upstream)
+     * - Otherwise              → direct strategy (push feature branch to shared origin)
+     */
+    async _detectWorkflowStrategy(localPath) {
+        try {
+            const { stdout } = await execFileAsync('git', ['remote'], {
+                cwd: localPath,
+                timeout: 3000,
+            });
+            const remotes = stdout.trim().split('\n').map(r => r.trim()).filter(Boolean);
+            if (remotes.includes('upstream'))
+                return 'fork';
+        }
+        catch {
+            // git not available or not a git repo — fall back to direct
+        }
+        return 'direct';
+    }
     async buildRegistry() {
         let config = null;
         try {

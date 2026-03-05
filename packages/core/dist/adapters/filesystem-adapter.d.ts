@@ -22,5 +22,6 @@ export declare class FilesystemAdapter implements DataAdapter {
     read(type: ArtifactType, id: string): Promise<ArtifactBundle>;
     exists(type: ArtifactType, id: string): Promise<boolean>;
     write(type: ArtifactType, id: string, bundle: ArtifactBundle): Promise<void>;
+    readResourceFile(type: ArtifactType, id: string, relativePath: string): Promise<string | null>;
 }
 //# sourceMappingURL=filesystem-adapter.d.ts.map
