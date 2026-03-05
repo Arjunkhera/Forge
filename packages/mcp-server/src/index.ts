@@ -553,8 +553,10 @@ export interface HttpServerOptions {
 export async function startMcpServerHttp(opts: HttpServerOptions): Promise<void> {
   const { port, host, workspaceRoot = process.cwd() } = opts;
 
-  // Session registry: maps sessionId -> transport
-  const sessions = new Map<string, StreamableHTTPServerTransport>();
+  // Session registry: maps sessionId -> { transport, lastSeen }
+  const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  interface SessionEntry { transport: StreamableHTTPServerTransport; lastSeen: number; }
+  const sessions = new Map<string, SessionEntry>();
 
   const httpServer = http.createServer(async (req, res) => {
     // Health check endpoint
@@ -573,9 +575,9 @@ export async function startMcpServerHttp(opts: HttpServerOptions): Promise<void>
     // All other requests go to the MCP transport
     try {
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
-      let transport = sessionId ? sessions.get(sessionId) : undefined;
+      let entry = sessionId ? sessions.get(sessionId) : undefined;
 
-      if (sessionId && !transport) {
+      if (sessionId && !entry) {
         // Session ID provided but unknown (e.g. server restarted, session expired).
         // Per MCP spec: return 404 so the client can reinitialize cleanly.
         // Without this guard, we'd create a new uninitialized transport for every
@@ -586,24 +588,29 @@ export async function startMcpServerHttp(opts: HttpServerOptions): Promise<void>
         return;
       }
 
-      if (!transport) {
+      let transport: StreamableHTTPServerTransport;
+      if (!entry) {
         // No session ID = new session request (initialize handshake).
         const server = buildServer(workspaceRoot);
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           enableJsonResponse: true,
           onsessioninitialized: (sid) => {
-            sessions.set(sid, transport!);
+            sessions.set(sid, { transport, lastSeen: Date.now() });
             log('info', 'MCP session initialized', { sessionId: sid });
           },
         });
         transport.onclose = () => {
-          if (transport!.sessionId) {
-            sessions.delete(transport!.sessionId);
-            log('info', 'MCP session closed', { sessionId: transport!.sessionId });
+          if (transport.sessionId) {
+            sessions.delete(transport.sessionId);
+            log('info', 'MCP session closed', { sessionId: transport.sessionId });
           }
         };
         await server.connect(transport);
+      } else {
+        // Known session — refresh last-seen timestamp.
+        entry.lastSeen = Date.now();
+        transport = entry.transport;
       }
 
       await transport.handleRequest(req, res);
@@ -620,9 +627,27 @@ export async function startMcpServerHttp(opts: HttpServerOptions): Promise<void>
     }
   });
 
+  // Close idle TCP connections quickly (30s) so clients don't hang after sleep/wake.
+  // Node default is effectively OS-level (~15min). keepAliveTimeout must be < headersTimeout.
+  httpServer.keepAliveTimeout = 30_000;
+  httpServer.headersTimeout = 35_000;
+
+  // Periodic TTL sweeper: evict sessions idle longer than SESSION_TTL_MS.
+  // .unref() ensures the timer doesn't prevent process exit.
+  const sweeper = setInterval(() => {
+    const now = Date.now();
+    for (const [sid, e] of sessions) {
+      if (now - e.lastSeen > SESSION_TTL_MS) {
+        sessions.delete(sid);
+        log('info', 'MCP session evicted (TTL)', { sessionId: sid, idleMs: now - e.lastSeen });
+      }
+    }
+  }, 60_000).unref();
+
   // Graceful shutdown
   const shutdown = (signal: string) => {
     log('info', `Received ${signal}, shutting down gracefully...`);
+    clearInterval(sweeper);
     httpServer.close(() => {
       log('info', 'HTTP server closed');
       process.exit(0);
