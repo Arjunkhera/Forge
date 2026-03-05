@@ -548,6 +548,77 @@ workspace
         process.exit(1);
     }
 });
+// forge global — global plugin management
+const global = program
+    .command('global')
+    .description('Manage globally installed plugins (~/.claude/)');
+// forge global install <ref>
+global
+    .command('install <ref>')
+    .description('Install a plugin globally (e.g., plugin:horus-core)')
+    .action(async (ref) => {
+    const forge = new core_1.ForgeCore(program.opts().config);
+    try {
+        const report = await forge.installGlobal(ref);
+        console.log(chalk_1.default.green(`✓ Globally installed '${report.pluginId}' v${report.version}`));
+        console.log(`  Files written: ${report.filesWritten.length}`);
+        for (const f of report.filesWritten) {
+            console.log(chalk_1.default.gray(`    + ${f}`));
+        }
+        if (report.claudeMdUpdated) {
+            console.log(`  CLAUDE.md: updated with orchestrator rules`);
+        }
+    }
+    catch (err) {
+        console.error(chalk_1.default.red(`✗ ${err.message}`));
+        if (err.suggestion)
+            console.error(chalk_1.default.gray(`  Hint: ${err.suggestion}`));
+        process.exit(1);
+    }
+});
+// forge global uninstall <plugin-id>
+global
+    .command('uninstall <plugin-id>')
+    .description('Uninstall a globally installed plugin')
+    .action(async (pluginId) => {
+    const forge = new core_1.ForgeCore(program.opts().config);
+    try {
+        await forge.uninstallGlobal(pluginId);
+        console.log(chalk_1.default.green(`✓ Uninstalled '${pluginId}'`));
+    }
+    catch (err) {
+        console.error(chalk_1.default.red(`✗ ${err.message}`));
+        if (err.suggestion)
+            console.error(chalk_1.default.gray(`  Hint: ${err.suggestion}`));
+        process.exit(1);
+    }
+});
+// forge global list
+global
+    .command('list')
+    .description('List globally installed plugins')
+    .action(async () => {
+    const forge = new core_1.ForgeCore(program.opts().config);
+    try {
+        const plugins = await forge.listGlobal();
+        if (plugins.length === 0) {
+            console.log(chalk_1.default.yellow('No globally installed plugins'));
+            return;
+        }
+        const table = new cli_table3_1.default({
+            head: [chalk_1.default.bold('Plugin'), chalk_1.default.bold('Version'), chalk_1.default.bold('Installed'), chalk_1.default.bold('Files')],
+            colWidths: [25, 12, 25, 8],
+        });
+        for (const p of plugins) {
+            table.push([p.id, p.version, new Date(p.installedAt).toLocaleString(), String(p.files.length)]);
+        }
+        console.log(table.toString());
+    }
+    catch (err) {
+        console.error(chalk_1.default.red(`✗ ${err.message}`));
+        process.exit(1);
+    }
+});
 // forge serve — starts MCP server
 program
     .command('serve')
