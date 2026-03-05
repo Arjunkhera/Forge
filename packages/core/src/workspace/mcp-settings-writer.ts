@@ -55,6 +55,17 @@ export async function updateClaudeMcpServers(
   }
   settings.mcpServers = mcpServers;
 
+  // Ensure MCP tools are pre-approved so Claude Code doesn't prompt for each one.
+  // Without this, the mere existence of settings.local.json causes Claude Code to
+  // treat the local permissions as authoritative, shadowing the global "mcp__*" wildcard.
+  const permissions = (settings.permissions as Record<string, unknown>) ?? {};
+  const allow = Array.isArray(permissions.allow) ? permissions.allow as string[] : [];
+  if (!allow.includes('mcp__*')) {
+    allow.push('mcp__*');
+  }
+  permissions.allow = allow;
+  settings.permissions = permissions;
+
   await fs.mkdir(path.dirname(settingsPath), { recursive: true });
   await fs.writeFile(
     settingsPath,
