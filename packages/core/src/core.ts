@@ -485,7 +485,10 @@ export class ForgeCore {
     const globalConfig = await loadGlobalConfig(this.globalConfigPath);
     const { scan_paths, host_repos_path } = globalConfig.repos;
 
-    const repoIndex = await loadRepoIndex(globalConfig.repos.index_path);
+    let repoIndex = await loadRepoIndex(globalConfig.repos.index_path);
+    if (!repoIndex && globalConfig.repos.scan_paths.length > 0) {
+      repoIndex = await this.repoScan();
+    }
     if (!repoIndex) {
       throw new ForgeError('REPO_INDEX_NOT_FOUND', 'Repository index not found.', 'Run: forge repo scan');
     }

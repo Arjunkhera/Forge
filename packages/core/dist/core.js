@@ -381,7 +381,10 @@ class ForgeCore {
     async repoClone(opts) {
         const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
         const { scan_paths, host_repos_path } = globalConfig.repos;
-        const repoIndex = await (0, repo_index_store_js_1.loadRepoIndex)(globalConfig.repos.index_path);
+        let repoIndex = await (0, repo_index_store_js_1.loadRepoIndex)(globalConfig.repos.index_path);
+        if (!repoIndex && globalConfig.repos.scan_paths.length > 0) {
+            repoIndex = await this.repoScan();
+        }
         if (!repoIndex) {
             throw new errors_js_1.ForgeError('REPO_INDEX_NOT_FOUND', 'Repository index not found.', 'Run: forge repo scan');
         }
