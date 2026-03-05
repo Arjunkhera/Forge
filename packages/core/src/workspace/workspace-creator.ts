@@ -15,7 +15,7 @@ import { loadGlobalConfig } from '../config/global-config-loader.js';
 import { expandPath } from '../config/path-utils.js';
 import { loadRepoIndex } from '../repo/repo-index-store.js';
 import { RepoIndexQuery } from '../repo/repo-index-query.js';
-import { updateClaudeMcpServers, type McpServerEntry } from './mcp-settings-writer.js';
+import { updateClaudeMcpServers, emitPreToolUseHook, type McpServerEntry } from './mcp-settings-writer.js';
 
 /**
  * Options for creating a new workspace.
@@ -277,6 +277,18 @@ export class WorkspaceCreator {
         console.warn(`[Forge] Warning: Could not update .claude/settings.local.json: ${err.message}`);
       }
 
+      // Step 8b: Emit PreToolUse hook to block edits to source repos.
+      // Uses host_repos_path (the host-side path to source repositories) which is
+      // machine-specific — set via FORGE_HOST_REPOS_PATH env var in Docker, or
+      // repos.host_repos_path in ~/.forge/config.yaml for native installs.
+      if (host_repos_path) {
+        try {
+          await emitPreToolUseHook(workspacePath, hostWorkspacePath, host_repos_path);
+        } catch (err: any) {
+          console.warn(`[Forge] Warning: Could not emit PreToolUse hook: ${err.message}`);
+        }
+      }
+
       // Step 9: Emit environment variables file
       // Resolve workflow metadata for the first repo (drives PR strategy in scripts)
       let workflowStrategy = '';
@@ -306,6 +318,7 @@ export class WorkspaceCreator {
 
       if (workflowStrategy) envVars['SDLC_WORKFLOW_STRATEGY'] = workflowStrategy;
       if (prTarget) envVars['SDLC_PR_TARGET'] = prTarget;
+      if (host_repos_path) envVars['SDLC_SOURCE_REPOS_PATH'] = host_repos_path;
 
       const envContent = Object.entries(envVars)
         .map(([k, v]) => `${k}=${v}`)
