@@ -176,7 +176,7 @@ const TOOLS = [
         },
         workspacePath: {
           type: 'string',
-          description: 'Workspace directory to clone into (optional). When provided, the clone is placed inside this workspace folder instead of the global mount path.',
+          description: 'Workspace directory to clone into (optional). Pass $FORGE_WORKSPACE_PATH from workspace.env. When provided, the clone is placed inside this workspace folder instead of the global mount path.',
         },
       },
       required: ['repoName'],

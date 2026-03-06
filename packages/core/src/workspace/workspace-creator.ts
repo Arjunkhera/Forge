@@ -344,6 +344,8 @@ export class WorkspaceCreator {
         SDLC_SIGNED_COMMITS: String(workspaceConfigMeta.git_workflow.signed_commits),
         FORGE_WORKSPACE_ID: id,
         FORGE_WORKSPACE_NAME: name,
+        FORGE_WORKSPACE_PATH: workspacePath,
+        FORGE_HOST_WORKSPACE_PATH: hostWorkspacePath,
       };
 
       if (workflowStrategy) envVars['SDLC_WORKFLOW_STRATEGY'] = workflowStrategy;

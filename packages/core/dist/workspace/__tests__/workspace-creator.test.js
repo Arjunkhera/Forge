@@ -170,6 +170,66 @@ const repo_clone_js_1 = require("../../repo/repo-clone.js");
         (0, vitest_1.expect)(claudeMdContent).toContain(`${record.name}/Anvil`);
     });
 });
+(0, vitest_1.describe)('WorkspaceCreator — workspace.env includes FORGE_WORKSPACE_PATH vars', () => {
+    let tmpDir;
+    (0, vitest_1.beforeEach)(async () => {
+        tmpDir = await fs_1.promises.mkdtemp(path_1.default.join(os_1.default.tmpdir(), 'forge-envvars-'));
+    });
+    (0, vitest_1.afterEach)(async () => {
+        await fs_1.promises.rm(tmpDir, { recursive: true, force: true });
+    });
+    (0, vitest_1.it)('emits FORGE_WORKSPACE_PATH and FORGE_HOST_WORKSPACE_PATH in workspace.env', async () => {
+        const { execFile } = await import('child_process');
+        const { promisify } = await import('util');
+        const runGit = promisify(execFile);
+        const localRepoDir = path_1.default.join(tmpDir, 'repos', 'Anvil');
+        await fs_1.promises.mkdir(localRepoDir, { recursive: true });
+        await runGit('git', ['init', localRepoDir]);
+        await runGit('git', ['-C', localRepoDir, 'checkout', '-b', 'main']);
+        await fs_1.promises.writeFile(path_1.default.join(localRepoDir, 'README.md'), '# Anvil');
+        await runGit('git', ['-C', localRepoDir, 'add', '.']);
+        await runGit('git', ['-C', localRepoDir, '-c', 'user.name=Test', '-c', 'user.email=t@t.com',
+            'commit', '-m', 'init']);
+        const mockForge = {
+            resolve: vitest_1.vi.fn().mockResolvedValue({
+                ref: { version: '1.0.0' },
+                bundle: {
+                    meta: {
+                        skills: [],
+                        plugins: [],
+                        mcp_servers: {},
+                        git_workflow: {
+                            branch_pattern: 'feature/{id}',
+                            base_branch: 'main',
+                            commit_format: 'conventional',
+                            stash_before_checkout: false,
+                            pr_template: false,
+                            signed_commits: false,
+                        },
+                    },
+                },
+            }),
+            install: vitest_1.vi.fn().mockResolvedValue(undefined),
+            repoWorkflow: vitest_1.vi.fn().mockRejectedValue(new Error('no workflow')),
+        };
+        const mountPath = path_1.default.join(tmpDir, 'workspaces');
+        const creator = new workspace_creator_js_1.WorkspaceCreator(mockForge);
+        const record = await creator.create({
+            configName: 'sdlc-default',
+            repos: ['Anvil'],
+            mountPath,
+        });
+        const envContent = await fs_1.promises.readFile(path_1.default.join(record.path, 'workspace.env'), 'utf-8');
+        const envLines = envContent.split('\n').filter(Boolean);
+        const envMap = Object.fromEntries(envLines.map(line => line.split('=')));
+        (0, vitest_1.expect)(envMap['FORGE_WORKSPACE_PATH']).toBeDefined();
+        (0, vitest_1.expect)(envMap['FORGE_HOST_WORKSPACE_PATH']).toBeDefined();
+        // On native install (no host_workspaces_path config), both paths should be equal
+        (0, vitest_1.expect)(envMap['FORGE_WORKSPACE_PATH']).toBe(envMap['FORGE_HOST_WORKSPACE_PATH']);
+        // Both should be inside the mount path
+        (0, vitest_1.expect)(envMap['FORGE_WORKSPACE_PATH']).toContain(mountPath);
+    });
+});
 (0, vitest_1.describe)('reference clone integration', () => {
     let tmpDir;
     (0, vitest_1.beforeEach)(async () => {

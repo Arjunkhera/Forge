@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.GlobalConfigSchema = exports.GlobalPluginEntrySchema = exports.ReposConfigSchema = exports.HostEndpointsSchema = exports.McpEndpointsSchema = exports.McpEndpointSchema = exports.WorkspaceSettingsSchema = void 0;
+exports.GlobalConfigSchema = exports.ClaudePermissionsSchema = exports.GlobalPluginEntrySchema = exports.ReposConfigSchema = exports.HostEndpointsSchema = exports.McpEndpointsSchema = exports.McpEndpointSchema = exports.WorkspaceSettingsSchema = void 0;
 const zod_1 = require("zod");
 const forge_config_js_1 = require("./forge-config.js");
 /**
@@ -113,6 +113,15 @@ exports.GlobalPluginEntrySchema = zod_1.z.object({
     installed_at: zod_1.z.string(),
     files: zod_1.z.array(zod_1.z.string()).default([]),
 });
+/**
+ * Claude Code permissions to write into workspace settings.local.json.
+ * Prevents the local file from shadowing the user's global ~/.claude/settings.json
+ * permissions (Claude Code treats local settings as authoritative when present).
+ */
+exports.ClaudePermissionsSchema = zod_1.z.object({
+    allow: zod_1.z.array(zod_1.z.string()).default(['mcp__*']),
+    deny: zod_1.z.array(zod_1.z.string()).default([]),
+});
 exports.GlobalConfigSchema = zod_1.z.object({
     registries: zod_1.z.array(forge_config_js_1.RegistryConfigSchema).default([]),
     workspace: exports.WorkspaceSettingsSchema.default({}),
@@ -120,5 +129,6 @@ exports.GlobalConfigSchema = zod_1.z.object({
     host_endpoints: exports.HostEndpointsSchema.optional(),
     repos: exports.ReposConfigSchema.default({}),
     global_plugins: zod_1.z.record(zod_1.z.string(), exports.GlobalPluginEntrySchema).default({}),
+    claude_permissions: exports.ClaudePermissionsSchema.default({}),
 });
 //# sourceMappingURL=global-config.js.map

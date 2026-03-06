@@ -62,6 +62,26 @@ function generateBranchName(pattern, vars) {
     return result || 'workspace';
 }
 /**
+ * Merge Claude permissions from workspace config (defaults) and per-user config (overrides).
+ * Per-user entries are added on top of workspace config entries, with deduplication.
+ * Returns undefined only if neither source provides permissions.
+ */
+function mergeClaudePermissions(workspaceConfig, userConfig) {
+    if (!workspaceConfig && !userConfig)
+        return undefined;
+    const allow = [...(workspaceConfig?.allow ?? [])];
+    for (const entry of userConfig?.allow ?? []) {
+        if (!allow.includes(entry))
+            allow.push(entry);
+    }
+    const deny = [...(workspaceConfig?.deny ?? [])];
+    for (const entry of userConfig?.deny ?? []) {
+        if (!deny.includes(entry))
+            deny.push(entry);
+    }
+    return { allow, deny };
+}
+/**
  * Main workspace creator class.
  */
 class WorkspaceCreator {
@@ -215,10 +235,24 @@ class WorkspaceCreator {
                         mcpServersToRegister.push({ name: serverName, url });
                     }
                 }
-                await (0, mcp_settings_writer_js_1.updateClaudeMcpServers)(mcpServersToRegister, workspacePath, hostWorkspacePath);
+                // Merge permissions: workspace config provides defaults, per-user config overrides.
+                const mergedPermissions = mergeClaudePermissions(workspaceConfigMeta.claude_permissions, globalConfig.claude_permissions);
+                await (0, mcp_settings_writer_js_1.updateClaudeMcpServers)(mcpServersToRegister, workspacePath, hostWorkspacePath, mergedPermissions);
             }
             catch (err) {
                 console.warn(`[Forge] Warning: Could not update .claude/settings.local.json: ${err.message}`);
+            }
+            // Step 8b: Emit PreToolUse hook to block edits to source repos.
+            // Uses host_repos_path (the host-side path to source repositories) which is
+            // machine-specific — set via FORGE_HOST_REPOS_PATH env var in Docker, or
+            // repos.host_repos_path in ~/.forge/config.yaml for native installs.
+            if (host_repos_path) {
+                try {
+                    await (0, mcp_settings_writer_js_1.emitPreToolUseHook)(workspacePath, hostWorkspacePath, host_repos_path);
+                }
+                catch (err) {
+                    console.warn(`[Forge] Warning: Could not emit PreToolUse hook: ${err.message}`);
+                }
             }
             // Step 9: Emit environment variables file
             // Resolve workflow metadata for the first repo (drives PR strategy in scripts)
@@ -243,11 +277,15 @@ class WorkspaceCreator {
                 SDLC_SIGNED_COMMITS: String(workspaceConfigMeta.git_workflow.signed_commits),
                 FORGE_WORKSPACE_ID: id,
                 FORGE_WORKSPACE_NAME: name,
+                FORGE_WORKSPACE_PATH: workspacePath,
+                FORGE_HOST_WORKSPACE_PATH: hostWorkspacePath,
             };
             if (workflowStrategy)
                 envVars['SDLC_WORKFLOW_STRATEGY'] = workflowStrategy;
             if (prTarget)
                 envVars['SDLC_PR_TARGET'] = prTarget;
+            if (host_repos_path)
+                envVars['SDLC_SOURCE_REPOS_PATH'] = host_repos_path;
             const envContent = Object.entries(envVars)
                 .map(([k, v]) => `${k}=${v}`)
                 .join('\n') + '\n';
