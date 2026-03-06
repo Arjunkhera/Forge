@@ -16,6 +16,7 @@ import { expandPath } from '../config/path-utils.js';
 import { loadRepoIndex } from '../repo/repo-index-store.js';
 import { RepoIndexQuery } from '../repo/repo-index-query.js';
 import { updateClaudeMcpServers, emitPreToolUseHook, type McpServerEntry } from './mcp-settings-writer.js';
+import type { ClaudePermissions } from '../models/global-config.js';
 
 /**
  * Options for creating a new workspace.
@@ -74,6 +75,30 @@ export function generateBranchName(
   // Clean up double slashes
   result = result.replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
   return result || 'workspace';
+}
+
+/**
+ * Merge Claude permissions from workspace config (defaults) and per-user config (overrides).
+ * Per-user entries are added on top of workspace config entries, with deduplication.
+ * Returns undefined only if neither source provides permissions.
+ */
+function mergeClaudePermissions(
+  workspaceConfig?: ClaudePermissions,
+  userConfig?: ClaudePermissions,
+): ClaudePermissions | undefined {
+  if (!workspaceConfig && !userConfig) return undefined;
+
+  const allow = [...(workspaceConfig?.allow ?? [])];
+  for (const entry of userConfig?.allow ?? []) {
+    if (!allow.includes(entry)) allow.push(entry);
+  }
+
+  const deny = [...(workspaceConfig?.deny ?? [])];
+  for (const entry of userConfig?.deny ?? []) {
+    if (!deny.includes(entry)) deny.push(entry);
+  }
+
+  return { allow, deny };
 }
 
 /**
@@ -272,7 +297,12 @@ export class WorkspaceCreator {
             mcpServersToRegister.push({ name: serverName, url });
           }
         }
-        await updateClaudeMcpServers(mcpServersToRegister, workspacePath, hostWorkspacePath, globalConfig.claude_permissions);
+        // Merge permissions: workspace config provides defaults, per-user config overrides.
+        const mergedPermissions = mergeClaudePermissions(
+          workspaceConfigMeta.claude_permissions,
+          globalConfig.claude_permissions,
+        );
+        await updateClaudeMcpServers(mcpServersToRegister, workspacePath, hostWorkspacePath, mergedPermissions);
       } catch (err: any) {
         console.warn(`[Forge] Warning: Could not update .claude/settings.local.json: ${err.message}`);
       }
