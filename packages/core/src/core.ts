@@ -482,6 +482,7 @@ export class ForgeCore {
     repoName: string;
     branchName?: string;
     destPath?: string;
+    workspacePath?: string;
   }): Promise<RepoCloneResult> {
     const globalConfig = await loadGlobalConfig(this.globalConfigPath);
     const { scan_paths, host_repos_path } = globalConfig.repos;
@@ -501,11 +502,11 @@ export class ForgeCore {
     }
 
     const mountPath = expandPath(globalConfig.workspace.mount_path);
-    // If workspaceRoot is inside mountPath, we're in a workspace — clone into it
-    const resolvedWsRoot = path.resolve(this.workspaceRoot);
+    // Use explicit workspacePath if provided (MCP callers), else fall back to workspaceRoot
+    const effectiveRoot = opts.workspacePath ? path.resolve(opts.workspacePath) : path.resolve(this.workspaceRoot);
     const resolvedMount = path.resolve(mountPath);
-    const insideWorkspace = resolvedWsRoot.startsWith(resolvedMount + path.sep) && resolvedWsRoot !== resolvedMount;
-    const basePath = insideWorkspace ? resolvedWsRoot : mountPath;
+    const insideWorkspace = effectiveRoot.startsWith(resolvedMount + path.sep) && effectiveRoot !== resolvedMount;
+    const basePath = insideWorkspace ? effectiveRoot : mountPath;
     const clonePath = opts.destPath ?? path.join(basePath, opts.repoName);
 
     await createReferenceClone({
