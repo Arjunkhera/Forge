@@ -107,6 +107,16 @@ export declare const WorkspaceConfigMetaSchema: z.ZodObject<{
         pr_template?: boolean | undefined;
         signed_commits?: boolean | undefined;
     }>>;
+    claude_permissions: z.ZodOptional<z.ZodObject<{
+        allow: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
+        deny: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
+    }, "strip", z.ZodTypeAny, {
+        allow: string[];
+        deny: string[];
+    }, {
+        allow?: string[] | undefined;
+        deny?: string[] | undefined;
+    }>>;
 }, "strip", z.ZodTypeAny, {
     id: string;
     name: string;
@@ -134,6 +144,10 @@ export declare const WorkspaceConfigMetaSchema: z.ZodObject<{
     };
     author?: string | undefined;
     license?: string | undefined;
+    claude_permissions?: {
+        allow: string[];
+        deny: string[];
+    } | undefined;
 }, {
     id: string;
     name: string;
@@ -145,6 +159,10 @@ export declare const WorkspaceConfigMetaSchema: z.ZodObject<{
     tags?: string[] | undefined;
     skills?: string[] | undefined;
     plugins?: string[] | undefined;
+    claude_permissions?: {
+        allow?: string[] | undefined;
+        deny?: string[] | undefined;
+    } | undefined;
     mcp_servers?: Record<string, {
         description: string;
         required?: boolean | undefined;

@@ -375,8 +375,9 @@ class ForgeCore {
      * Create an isolated reference clone of a repository.
      *
      * Looks up the repo in the local index, creates a reference clone at
-     * destPath (default: <mountPath>/<repoName>-clone-<shortId>), optionally
-     * creates a feature branch, and returns paths in host-translated form.
+     * destPath (default: <workspaceRoot>/<repoName> when inside a workspace,
+     * or <mountPath>/<repoName> otherwise), optionally creates a feature
+     * branch, and returns paths in host-translated form.
      */
     async repoClone(opts) {
         const globalConfig = await (0, global_config_loader_js_1.loadGlobalConfig)(this.globalConfigPath);
@@ -394,8 +395,12 @@ class ForgeCore {
             throw new errors_js_1.ForgeError('REPO_NOT_FOUND', `Repository "${opts.repoName}" not found in local index.`, 'Run: forge repo scan');
         }
         const mountPath = (0, path_utils_js_1.expandPath)(globalConfig.workspace.mount_path);
-        const shortId = Math.random().toString(36).slice(2, 10);
-        const clonePath = opts.destPath ?? path_1.default.join(mountPath, `${opts.repoName}-clone-${shortId}`);
+        // Use explicit workspacePath if provided (MCP callers), else fall back to workspaceRoot
+        const effectiveRoot = opts.workspacePath ? path_1.default.resolve(opts.workspacePath) : path_1.default.resolve(this.workspaceRoot);
+        const resolvedMount = path_1.default.resolve(mountPath);
+        const insideWorkspace = effectiveRoot.startsWith(resolvedMount + path_1.default.sep) && effectiveRoot !== resolvedMount;
+        const basePath = insideWorkspace ? effectiveRoot : mountPath;
+        const clonePath = opts.destPath ?? path_1.default.join(basePath, opts.repoName);
         await (0, repo_clone_js_1.createReferenceClone)({
             localPath: repo.localPath,
             remoteUrl: repo.remoteUrl,

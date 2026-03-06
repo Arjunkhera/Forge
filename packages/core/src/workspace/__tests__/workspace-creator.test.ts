@@ -198,6 +198,75 @@ describe('WorkspaceCreator — CLAUDE.md uses worktreePath when clone succeeds',
   });
 });
 
+describe('WorkspaceCreator — workspace.env includes FORGE_WORKSPACE_PATH vars', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'forge-envvars-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('emits FORGE_WORKSPACE_PATH and FORGE_HOST_WORKSPACE_PATH in workspace.env', async () => {
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const runGit = promisify(execFile);
+
+    const localRepoDir = path.join(tmpDir, 'repos', 'Anvil');
+    await fs.mkdir(localRepoDir, { recursive: true });
+    await runGit('git', ['init', localRepoDir]);
+    await runGit('git', ['-C', localRepoDir, 'checkout', '-b', 'main']);
+    await fs.writeFile(path.join(localRepoDir, 'README.md'), '# Anvil');
+    await runGit('git', ['-C', localRepoDir, 'add', '.']);
+    await runGit('git', ['-C', localRepoDir, '-c', 'user.name=Test', '-c', 'user.email=t@t.com',
+      'commit', '-m', 'init']);
+
+    const mockForge = {
+      resolve: vi.fn().mockResolvedValue({
+        ref: { version: '1.0.0' },
+        bundle: {
+          meta: {
+            skills: [],
+            plugins: [],
+            mcp_servers: {},
+            git_workflow: {
+              branch_pattern: 'feature/{id}',
+              base_branch: 'main',
+              commit_format: 'conventional',
+              stash_before_checkout: false,
+              pr_template: false,
+              signed_commits: false,
+            },
+          },
+        },
+      }),
+      install: vi.fn().mockResolvedValue(undefined),
+      repoWorkflow: vi.fn().mockRejectedValue(new Error('no workflow')),
+    };
+
+    const mountPath = path.join(tmpDir, 'workspaces');
+    const creator = new WorkspaceCreator(mockForge as any);
+    const record = await creator.create({
+      configName: 'sdlc-default',
+      repos: ['Anvil'],
+      mountPath,
+    });
+
+    const envContent = await fs.readFile(path.join(record.path, 'workspace.env'), 'utf-8');
+    const envLines = envContent.split('\n').filter(Boolean);
+    const envMap = Object.fromEntries(envLines.map(line => line.split('=') as [string, string]));
+
+    expect(envMap['FORGE_WORKSPACE_PATH']).toBeDefined();
+    expect(envMap['FORGE_HOST_WORKSPACE_PATH']).toBeDefined();
+    // On native install (no host_workspaces_path config), both paths should be equal
+    expect(envMap['FORGE_WORKSPACE_PATH']).toBe(envMap['FORGE_HOST_WORKSPACE_PATH']);
+    // Both should be inside the mount path
+    expect(envMap['FORGE_WORKSPACE_PATH']).toContain(mountPath);
+  });
+});
+
 describe('reference clone integration', () => {
   let tmpDir: string;
 

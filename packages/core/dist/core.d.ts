@@ -120,13 +120,15 @@ export declare class ForgeCore {
      * Create an isolated reference clone of a repository.
      *
      * Looks up the repo in the local index, creates a reference clone at
-     * destPath (default: <mountPath>/<repoName>-clone-<shortId>), optionally
-     * creates a feature branch, and returns paths in host-translated form.
+     * destPath (default: <workspaceRoot>/<repoName> when inside a workspace,
+     * or <mountPath>/<repoName> otherwise), optionally creates a feature
+     * branch, and returns paths in host-translated form.
      */
     repoClone(opts: {
         repoName: string;
         branchName?: string;
         destPath?: string;
+        workspacePath?: string;
     }): Promise<RepoCloneResult>;
     /**
      * Create a new workspace from a workspace config artifact.

@@ -22,15 +22,15 @@ export declare const WorkspaceSettingsSchema: z.ZodObject<{
     store_path: z.ZodDefault<z.ZodString>;
     host_workspaces_path: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
-    retention_days: number;
     mount_path: string;
     default_config: string;
+    retention_days: number;
     store_path: string;
     host_workspaces_path?: string | undefined;
 }, {
-    retention_days?: number | undefined;
     mount_path?: string | undefined;
     default_config?: string | undefined;
+    retention_days?: number | undefined;
     store_path?: string | undefined;
     host_workspaces_path?: string | undefined;
 }>;
@@ -210,6 +210,22 @@ export declare const GlobalPluginEntrySchema: z.ZodObject<{
     files?: string[] | undefined;
 }>;
 export type GlobalPluginEntry = z.infer<typeof GlobalPluginEntrySchema>;
+/**
+ * Claude Code permissions to write into workspace settings.local.json.
+ * Prevents the local file from shadowing the user's global ~/.claude/settings.json
+ * permissions (Claude Code treats local settings as authoritative when present).
+ */
+export declare const ClaudePermissionsSchema: z.ZodObject<{
+    allow: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
+    deny: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
+}, "strip", z.ZodTypeAny, {
+    allow: string[];
+    deny: string[];
+}, {
+    allow?: string[] | undefined;
+    deny?: string[] | undefined;
+}>;
+export type ClaudePermissions = z.infer<typeof ClaudePermissionsSchema>;
 export declare const GlobalConfigSchema: z.ZodObject<{
     registries: z.ZodDefault<z.ZodArray<z.ZodDiscriminatedUnion<"type", [z.ZodObject<{
         type: z.ZodLiteral<"filesystem">;
@@ -277,15 +293,15 @@ export declare const GlobalConfigSchema: z.ZodObject<{
         store_path: z.ZodDefault<z.ZodString>;
         host_workspaces_path: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
-        retention_days: number;
         mount_path: string;
         default_config: string;
+        retention_days: number;
         store_path: string;
         host_workspaces_path?: string | undefined;
     }, {
-        retention_days?: number | undefined;
         mount_path?: string | undefined;
         default_config?: string | undefined;
+        retention_days?: number | undefined;
         store_path?: string | undefined;
         host_workspaces_path?: string | undefined;
     }>>;
@@ -393,6 +409,16 @@ export declare const GlobalConfigSchema: z.ZodObject<{
         installed_at: string;
         files?: string[] | undefined;
     }>>>;
+    claude_permissions: z.ZodDefault<z.ZodObject<{
+        allow: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
+        deny: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
+    }, "strip", z.ZodTypeAny, {
+        allow: string[];
+        deny: string[];
+    }, {
+        allow?: string[] | undefined;
+        deny?: string[] | undefined;
+    }>>;
 }, "strip", z.ZodTypeAny, {
     registries: ({
         name: string;
@@ -411,9 +437,9 @@ export declare const GlobalConfigSchema: z.ZodObject<{
         token?: string | undefined;
     })[];
     workspace: {
-        retention_days: number;
         mount_path: string;
         default_config: string;
+        retention_days: number;
         store_path: string;
         host_workspaces_path?: string | undefined;
     };
@@ -441,6 +467,10 @@ export declare const GlobalConfigSchema: z.ZodObject<{
         files: string[];
         installed_at: string;
     }>;
+    claude_permissions: {
+        allow: string[];
+        deny: string[];
+    };
     host_endpoints?: {
         anvil?: string | undefined;
         vault?: string | undefined;
@@ -464,9 +494,9 @@ export declare const GlobalConfigSchema: z.ZodObject<{
         token?: string | undefined;
     })[] | undefined;
     workspace?: {
-        retention_days?: number | undefined;
         mount_path?: string | undefined;
         default_config?: string | undefined;
+        retention_days?: number | undefined;
         store_path?: string | undefined;
         host_workspaces_path?: string | undefined;
     } | undefined;
@@ -499,6 +529,10 @@ export declare const GlobalConfigSchema: z.ZodObject<{
         installed_at: string;
         files?: string[] | undefined;
     }> | undefined;
+    claude_permissions?: {
+        allow?: string[] | undefined;
+        deny?: string[] | undefined;
+    } | undefined;
 }>;
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 //# sourceMappingURL=global-config.d.ts.map

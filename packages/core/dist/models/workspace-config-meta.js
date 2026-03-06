@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.WorkspaceConfigMetaSchema = void 0;
 const zod_1 = require("zod");
 const skill_meta_js_1 = require("./skill-meta.js");
+const global_config_js_1 = require("./global-config.js");
 const McpServerConfigSchema = zod_1.z.object({
     description: zod_1.z.string(),
     required: zod_1.z.boolean().default(true),
@@ -46,5 +47,6 @@ exports.WorkspaceConfigMetaSchema = zod_1.z.object({
     mcp_servers: zod_1.z.record(zod_1.z.string(), McpServerConfigSchema).default({}),
     settings: WorkspaceSettingsConfigSchema.default({}),
     git_workflow: GitWorkflowConfigSchema.default({}),
+    claude_permissions: global_config_js_1.ClaudePermissionsSchema.optional(),
 });
 //# sourceMappingURL=workspace-config-meta.js.map
