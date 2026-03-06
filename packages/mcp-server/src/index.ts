@@ -174,6 +174,10 @@ const TOOLS = [
           type: 'string',
           description: 'Override destination path for the clone (optional). Defaults to <mountPath>/<repoName>-clone-<id>.',
         },
+        workspacePath: {
+          type: 'string',
+          description: 'Workspace directory to clone into (optional). When provided, the clone is placed inside this workspace folder instead of the global mount path.',
+        },
       },
       required: ['repoName'],
     },
@@ -412,10 +416,11 @@ function buildServer(workspaceRoot: string): Server {
         }
 
         case 'forge_repo_clone': {
-          const { repoName, branchName, destPath } = (args ?? {}) as {
+          const { repoName, branchName, destPath, workspacePath } = (args ?? {}) as {
             repoName: string;
             branchName?: string;
             destPath?: string;
+            workspacePath?: string;
           };
           if (!repoName) {
             return {
@@ -423,7 +428,7 @@ function buildServer(workspaceRoot: string): Server {
               isError: true,
             };
           }
-          const cloneResult = await forge.repoClone({ repoName, branchName, destPath });
+          const cloneResult = await forge.repoClone({ repoName, branchName, destPath, workspacePath });
           return {
             content: [{
               type: 'text',
