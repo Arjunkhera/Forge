@@ -502,8 +502,17 @@ export class ForgeCore {
     }
 
     const mountPath = expandPath(globalConfig.workspace.mount_path);
-    // Use explicit workspacePath if provided (MCP callers), else fall back to workspaceRoot
-    const effectiveRoot = opts.workspacePath ? path.resolve(opts.workspacePath) : path.resolve(this.workspaceRoot);
+    const hostMountPath = globalConfig.workspace.host_workspaces_path ?? mountPath;
+
+    // Resolve workspacePath, translating host path → container path when Forge
+    // runs in Docker. MCP callers pass $FORGE_WORKSPACE_PATH (host-side absolute
+    // path). Without translation, the host path never matches mountPath and the
+    // clone always lands in the workspaces root instead of the workspace folder.
+    let effectiveRoot = path.resolve(opts.workspacePath ?? this.workspaceRoot);
+    if (hostMountPath !== mountPath && effectiveRoot.startsWith(hostMountPath + path.sep)) {
+      effectiveRoot = mountPath + effectiveRoot.slice(hostMountPath.length);
+    }
+
     const resolvedMount = path.resolve(mountPath);
     const insideWorkspace = effectiveRoot.startsWith(resolvedMount + path.sep) && effectiveRoot !== resolvedMount;
     const basePath = insideWorkspace ? effectiveRoot : mountPath;
@@ -520,7 +529,6 @@ export class ForgeCore {
     const translatedRepo = translateRepoPath(repo, scan_paths, host_repos_path);
 
     // Compute host-side clone path for display (Docker path → host path)
-    const hostMountPath = globalConfig.workspace.host_workspaces_path ?? mountPath;
     const cloneRelative = path.relative(mountPath, clonePath);
     const hostClonePath = path.join(hostMountPath, cloneRelative);
 
