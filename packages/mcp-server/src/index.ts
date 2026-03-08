@@ -176,7 +176,7 @@ const TOOLS = [
         },
         workspacePath: {
           type: 'string',
-          description: 'Workspace directory to clone into (optional). Pass $FORGE_WORKSPACE_PATH from workspace.env. When provided, the clone is placed inside this workspace folder instead of the global mount path.',
+          description: 'Workspace directory to clone into. Pass $FORGE_WORKSPACE_PATH from workspace.env (e.g. /data/workspaces/your-workspace-id). Required unless destPath is explicitly provided — omitting both causes the clone to land at the global mount root instead of inside your workspace.',
         },
       },
       required: ['repoName'],
@@ -232,6 +232,45 @@ const TOOLS = [
     },
   },
 ];
+
+// ─── Validation helpers ────────────────────────────────────────────────────
+
+/**
+ * Validate forge_repo_clone arguments.
+ *
+ * Returns an error object if the call is invalid, null if valid.
+ * Exported so tests can assert on the guard directly without invoking the full
+ * MCP transport — this ensures a future refactor cannot accidentally drop the
+ * validation without breaking the test suite.
+ *
+ * The recurring regression: callers omit workspacePath, causing clones to land
+ * at the global mount root (/workspaces/<repo>) instead of the workspace
+ * folder (/workspaces/<workspace-id>/<repo>). Without this guard the failure
+ * is silent — the clone succeeds at the wrong path.
+ */
+export function validateRepoCloneArgs(args: {
+  repoName?: string;
+  workspacePath?: string;
+  destPath?: string;
+}): { error: true; code: string; message: string; suggestion: string } | null {
+  if (!args.repoName) {
+    return {
+      error: true,
+      code: 'REPO_NAME_REQUIRED',
+      message: 'repoName is required.',
+      suggestion: 'Provide the repoName parameter.',
+    };
+  }
+  if (!args.workspacePath && !args.destPath) {
+    return {
+      error: true,
+      code: 'WORKSPACE_PATH_REQUIRED',
+      message: 'workspacePath is required when calling forge_repo_clone from a workspace session.',
+      suggestion: 'Pass workspacePath: $FORGE_WORKSPACE_PATH from workspace.env (e.g. /data/workspaces/your-workspace-id). Alternatively, provide an explicit destPath.',
+    };
+  }
+  return null;
+}
 
 // ─── Tool handler ──────────────────────────────────────────────────────────
 
@@ -422,9 +461,10 @@ function buildServer(workspaceRoot: string): Server {
             destPath?: string;
             workspacePath?: string;
           };
-          if (!repoName) {
+          const validationError = validateRepoCloneArgs({ repoName, workspacePath, destPath });
+          if (validationError) {
             return {
-              content: [{ type: 'text', text: JSON.stringify({ error: true, message: 'repoName is required' }) }],
+              content: [{ type: 'text', text: JSON.stringify(validationError) }],
               isError: true,
             };
           }
