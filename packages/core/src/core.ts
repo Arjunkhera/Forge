@@ -518,13 +518,21 @@ export class ForgeCore {
     const basePath = insideWorkspace ? effectiveRoot : mountPath;
     const clonePath = opts.destPath ?? path.join(basePath, opts.repoName);
 
-    await createReferenceClone({
+    const { actualDefaultBranch } = await createReferenceClone({
       localPath: repo.localPath,
       remoteUrl: repo.remoteUrl,
       destPath: clonePath,
       branchName: opts.branchName,
       defaultBranch: repo.defaultBranch,
     });
+
+    // If the clone revealed a different default branch than the index stored, update it.
+    if (actualDefaultBranch !== repo.defaultBranch) {
+      const updatedRepos = repoIndex.repos.map((r) =>
+        r.name === repo.name ? { ...r, defaultBranch: actualDefaultBranch } : r,
+      );
+      await saveRepoIndex({ ...repoIndex, repos: updatedRepos }, globalConfig.repos.index_path);
+    }
 
     const translatedRepo = translateRepoPath(repo, scan_paths, host_repos_path);
 
@@ -538,7 +546,7 @@ export class ForgeCore {
       repoName: opts.repoName,
       clonePath,
       hostClonePath,
-      branch: opts.branchName ?? repo.defaultBranch,
+      branch: opts.branchName ?? actualDefaultBranch,
       origin,
     };
   }
