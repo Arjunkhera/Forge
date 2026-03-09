@@ -340,7 +340,7 @@ describe('reference clone integration', () => {
       destPath: cloneDir,
       branchName: 'feature/test-fallback',
       defaultBranch: 'main',
-    })).resolves.toBeUndefined();
+    })).resolves.toMatchObject({ actualDefaultBranch: 'main' });
 
     // Verify the clone exists and is on the feature branch
     const { stdout: branch } = await runGit('git', ['-C', cloneDir, 'branch', '--show-current']);

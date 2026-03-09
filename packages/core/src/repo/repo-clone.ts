@@ -10,7 +10,7 @@ export interface RepoCloneOptions {
   remoteUrl: string | null; // remote URL to fetch from; null → local-only clone
   destPath: string;        // destination path for the new clone
   branchName?: string;     // feature branch to create (optional)
-  defaultBranch: string;   // base branch (e.g. 'main', 'master')
+  defaultBranch: string;   // base branch hint (e.g. 'main', 'master') — may be stale
 }
 
 export interface RepoCloneResult {
@@ -19,6 +19,10 @@ export interface RepoCloneResult {
   hostClonePath: string;
   branch: string;
   origin: string;
+}
+
+export interface CreateReferenceCloneResult {
+  actualDefaultBranch: string;
 }
 
 export class RepoCloneError extends Error {
@@ -38,11 +42,34 @@ export class RepoCloneError extends Error {
  *
  * When branchName is provided, creates and checks out that branch.
  * When omitted, the clone stays on the default branch.
+ *
+ * Returns the actual default branch detected from the clone (which may differ
+ * from opts.defaultBranch if the index entry is stale, e.g. 'master' vs 'main').
  */
-export async function createReferenceClone(opts: RepoCloneOptions): Promise<void> {
+export async function createReferenceClone(opts: RepoCloneOptions): Promise<CreateReferenceCloneResult> {
   const runGit = async (args: string[], cwd: string): Promise<string> => {
     const { stdout } = await execFileAsync('git', args, { cwd, timeout: 60000 });
     return stdout.trim();
+  };
+
+  // Detect the real default branch from the cloned repo's HEAD.
+  // Falls back to known candidates if HEAD is detached, then to opts.defaultBranch.
+  const detectActualBranch = async (): Promise<string> => {
+    try {
+      const branch = await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], opts.destPath);
+      if (branch && branch !== 'HEAD') return branch;
+    } catch {
+      // ignore
+    }
+    for (const candidate of ['main', 'master']) {
+      try {
+        await runGit(['rev-parse', '--verify', candidate], opts.destPath);
+        return candidate;
+      } catch {
+        // not found
+      }
+    }
+    return opts.defaultBranch;
   };
 
   const checkoutBranch = async (base: string): Promise<void> => {
@@ -53,6 +80,8 @@ export async function createReferenceClone(opts: RepoCloneOptions): Promise<void
       if ((err.message || '').includes('already exists')) {
         await runGit(['checkout', opts.branchName], opts.destPath);
       } else {
+        // Clean up the partial clone before re-throwing so no stale directory remains.
+        await fs.rm(opts.destPath, { recursive: true, force: true }).catch(() => {});
         throw err;
       }
     }
@@ -60,19 +89,21 @@ export async function createReferenceClone(opts: RepoCloneOptions): Promise<void
 
   const cloneLocalOnly = async (): Promise<void> => {
     await runGit(['clone', opts.localPath, opts.destPath], path.dirname(opts.destPath));
-    await checkoutBranch(opts.defaultBranch);
   };
 
   if (!opts.remoteUrl) {
     try {
       await cloneLocalOnly();
+      const actualDefaultBranch = await detectActualBranch();
+      await checkoutBranch(actualDefaultBranch);
+      return { actualDefaultBranch };
     } catch (err: any) {
+      if (err instanceof RepoCloneError) throw err;
       throw new RepoCloneError(
         `Failed to clone ${opts.localPath} to ${opts.destPath}: ${err.message}`,
         'Check that the local repo path is valid',
       );
     }
-    return;
   }
 
   // Try reference clone from remote first
@@ -81,24 +112,28 @@ export async function createReferenceClone(opts: RepoCloneOptions): Promise<void
       ['clone', '--reference', opts.localPath, opts.remoteUrl, opts.destPath],
       path.dirname(opts.destPath),
     );
-    await checkoutBranch(`origin/${opts.defaultBranch}`);
-    return;
+    const actualDefaultBranch = await detectActualBranch();
+    await checkoutBranch(`origin/${actualDefaultBranch}`);
+    return { actualDefaultBranch };
   } catch {
-    // Remote clone failed — fall back to local-only
+    // Remote clone (or checkout) failed — fall back to local-only
   }
 
   // Local-only fallback (e.g. Docker without SSH/network access)
   try {
     await fs.rm(opts.destPath, { recursive: true, force: true }).catch(() => {});
     await cloneLocalOnly();
+    const actualDefaultBranch = await detectActualBranch();
+    await checkoutBranch(actualDefaultBranch);
+    // Fix origin: local-only fallback sets origin to localPath (Docker-internal).
+    // Repoint to remoteUrl so git push works from the host.
+    await runGit(['remote', 'set-url', 'origin', opts.remoteUrl], opts.destPath);
+    return { actualDefaultBranch };
   } catch (err: any) {
+    if (err instanceof RepoCloneError) throw err;
     throw new RepoCloneError(
       `Failed to clone ${opts.localPath} to ${opts.destPath}: ${err.message}`,
       'Check that the local repo path is valid',
     );
   }
-
-  // Fix origin: local-only fallback sets origin to localPath (Docker-internal).
-  // Repoint to remoteUrl so git push works from the host.
-  await runGit(['remote', 'set-url', 'origin', opts.remoteUrl], opts.destPath);
 }
