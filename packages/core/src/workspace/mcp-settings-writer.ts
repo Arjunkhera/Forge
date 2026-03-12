@@ -96,22 +96,29 @@ export async function updateClaudeMcpServers(
  * .claude/settings.local.json that blocks Edit/Write operations targeting
  * source repo paths. Forces Claude to use forge_repo_clone for isolation.
  *
+ * Uses a git-based heuristic instead of hardcoded paths: any file inside a
+ * git repo is blocked UNLESS that repo root is inside a Horus workspace
+ * ($HORUS_DATA_DIR/workspaces/). This covers user repos, Horus-internal
+ * repos (knowledge-base, notes, registry), and any future repos automatically.
+ *
  * @param workspacePath   Container-side workspace root (where files are written)
  * @param hostWorkspacePath  Host-side workspace root (used in hook command path)
- * @param sourceReposPath Host-side path to source repositories (e.g., ~/Desktop/Repositories)
  */
 export async function emitPreToolUseHook(
   workspacePath: string,
   hostWorkspacePath: string,
-  sourceReposPath: string,
 ): Promise<void> {
-  // 1. Write the guard script with the source repos path baked in
+  // 1. Write the guard script — fully generic, no user-specific paths
   const scriptsDir = path.join(workspacePath, '.claude', 'scripts');
   await fs.mkdir(scriptsDir, { recursive: true });
 
   const guardScript = `#!/bin/bash
 # Guard script: blocks Edit/Write on source repos, forcing forge_repo_clone usage.
 # Emitted by Forge during workspace creation. Do not edit manually.
+#
+# Heuristic: if the target file is inside a git repo, block the edit UNLESS
+# that repo root is inside a Horus workspace directory. This is fully generic —
+# no hardcoded user paths, and it automatically covers any git repo on the machine.
 
 input=$(cat)
 
@@ -133,18 +140,26 @@ if [[ "$file_path" != /* ]]; then
   file_path="$(pwd)/$file_path"
 fi
 
-# Source repos directory — baked in at workspace creation time
-SOURCE_REPOS_PATH=${JSON.stringify(sourceReposPath)}
+# Find the git repo root for this file (if any)
+file_dir=$(dirname "$file_path")
+repo_root=$(git -C "$file_dir" rev-parse --show-toplevel 2>/dev/null)
 
-# Normalize: strip trailing slash
-SOURCE_REPOS_PATH="\${SOURCE_REPOS_PATH%/}"
+# Not inside a git repo — allow (not a source repo)
+if [ -z "$repo_root" ]; then
+  exit 0
+fi
 
-# Check if the file is inside the source repos directory
-if [[ "$file_path" == "$SOURCE_REPOS_PATH"/* ]]; then
-  # Extract repo name from path
-  repo_name=$(echo "$file_path" | sed "s|^$SOURCE_REPOS_PATH/||" | cut -d'/' -f1)
+# Check if the repo root is inside a Horus workspace — if so, it's a
+# workspace clone created by forge_repo_clone, so allow edits
+HORUS_DATA_DIR="\${HORUS_DATA_DIR:-$HOME/.horus/data}"
+if [[ "$repo_root" == "$HORUS_DATA_DIR/workspaces/"* ]]; then
+  exit 0
+fi
 
-  cat >&2 <<MSG
+# It's a source repo — block the edit
+repo_name=$(basename "$repo_root")
+
+cat >&2 <<MSG
 BLOCKED: Cannot edit files in source repository '\${repo_name}' directly.
 
 To get an isolated working copy, call:
@@ -152,11 +167,7 @@ To get an isolated working copy, call:
 
 Then edit files in the returned clonePath instead.
 MSG
-  exit 2
-fi
-
-# Allow edits to workspace paths, clone paths, and non-repo files
-exit 0
+exit 2
 `;
 
   const scriptPath = path.join(scriptsDir, 'guard-source-repos.sh');

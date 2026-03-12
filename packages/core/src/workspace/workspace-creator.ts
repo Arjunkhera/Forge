@@ -308,15 +308,12 @@ export class WorkspaceCreator {
       }
 
       // Step 8b: Emit PreToolUse hook to block edits to source repos.
-      // Uses host_repos_path (the host-side path to source repositories) which is
-      // machine-specific — set via FORGE_HOST_REPOS_PATH env var in Docker, or
-      // repos.host_repos_path in ~/.forge/config.yaml for native installs.
-      if (host_repos_path) {
-        try {
-          await emitPreToolUseHook(workspacePath, hostWorkspacePath, host_repos_path);
-        } catch (err: any) {
-          console.warn(`[Forge] Warning: Could not emit PreToolUse hook: ${err.message}`);
-        }
+      // Uses a git-based heuristic — no hardcoded paths needed. The guard script
+      // blocks edits to any git repo that isn't inside a Horus workspace directory.
+      try {
+        await emitPreToolUseHook(workspacePath, hostWorkspacePath);
+      } catch (err: any) {
+        console.warn(`[Forge] Warning: Could not emit PreToolUse hook: ${err.message}`);
       }
 
       // Step 9: Emit environment variables file
