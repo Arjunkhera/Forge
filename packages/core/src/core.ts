@@ -11,6 +11,7 @@ import { Registry } from './registry/registry.js';
 import { Resolver } from './resolver/resolver.js';
 import { Compiler } from './compiler/compiler.js';
 import { ClaudeCodeStrategy } from './compiler/claude-code-strategy.js';
+import { CursorStrategy } from './compiler/cursor-strategy.js';
 import { GlobalClaudeCodeStrategy } from './compiler/global-claude-code-strategy.js';
 import { upsertManagedSection, removeManagedSection } from './compiler/claude-md-writer.js';
 import { FilesystemAdapter } from './adapters/filesystem-adapter.js';
@@ -121,6 +122,7 @@ export class ForgeCore {
     this.workspaceManager = new WorkspaceManager(workspaceRoot);
     this.compiler = new Compiler();
     this.compiler.register(new ClaudeCodeStrategy());
+    this.compiler.register(new CursorStrategy());
     this.globalConfigPath = options?.globalConfigPath;
   }
 

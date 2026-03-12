@@ -15,7 +15,7 @@ import { loadGlobalConfig } from '../config/global-config-loader.js';
 import { expandPath } from '../config/path-utils.js';
 import { loadRepoIndex } from '../repo/repo-index-store.js';
 import { RepoIndexQuery } from '../repo/repo-index-query.js';
-import { updateClaudeMcpServers, emitPreToolUseHook, type McpServerEntry } from './mcp-settings-writer.js';
+import { updateClaudeMcpServers, updateCursorMcpServers, emitPreToolUseHook, type McpServerEntry } from './mcp-settings-writer.js';
 import type { ClaudePermissions } from '../models/global-config.js';
 
 /**
@@ -233,14 +233,28 @@ export class WorkspaceCreator {
       await workspaceManager.writeConfig(workspaceForgeConfig);
 
       // Install using a new ForgeCore instance for this workspace
+      let workspaceForge: InstanceType<typeof import('../core.js').ForgeCore> | null = null;
       try {
-        const workspaceForge = new (await import('../core.js')).ForgeCore(workspacePath);
+        workspaceForge = new (await import('../core.js')).ForgeCore(workspacePath);
         await workspaceForge.install({
           target: 'claude-code',
           conflictStrategy: 'overwrite',
         });
       } catch (err: any) {
-        console.warn(`[Forge] Warning: Failed to install plugins: ${err.message}`);
+        console.warn(`[Forge] Warning: Failed to install plugins (claude-code): ${err.message}`);
+      }
+
+      // Install Cursor target in parallel — skills emit to .cursor/rules/*.mdc
+      try {
+        if (!workspaceForge) {
+          workspaceForge = new (await import('../core.js')).ForgeCore(workspacePath);
+        }
+        await workspaceForge.install({
+          target: 'cursor',
+          conflictStrategy: 'overwrite',
+        });
+      } catch (err: any) {
+        console.warn(`[Forge] Warning: Failed to install plugins (cursor): ${err.message}`);
       }
 
       // Step 8: Emit MCP configs
@@ -305,6 +319,24 @@ export class WorkspaceCreator {
         await updateClaudeMcpServers(mcpServersToRegister, workspacePath, hostWorkspacePath, mergedPermissions);
       } catch (err: any) {
         console.warn(`[Forge] Warning: Could not update .claude/settings.local.json: ${err.message}`);
+      }
+
+      // Step 8a-cursor: Register MCP servers in {workspace}/.cursor/mcp.json for Cursor IDE.
+      try {
+        const cursorMcpServers: McpServerEntry[] = [];
+        for (const [serverName] of Object.entries(workspaceConfigMeta.mcp_servers)) {
+          const hostEndpoint =
+            globalConfig.host_endpoints?.[serverName as keyof typeof globalConfig.host_endpoints];
+          const endpoint =
+            globalConfig.mcp_endpoints[serverName as keyof typeof globalConfig.mcp_endpoints];
+          const url = hostEndpoint ?? endpoint?.url;
+          if (url) {
+            cursorMcpServers.push({ name: serverName, url });
+          }
+        }
+        await updateCursorMcpServers(cursorMcpServers, workspacePath);
+      } catch (err: any) {
+        console.warn(`[Forge] Warning: Could not write .cursor/mcp.json: ${err.message}`);
       }
 
       // Step 8b: Emit PreToolUse hook to block edits to source repos.
@@ -377,6 +409,29 @@ ${Object.keys(workspaceConfigMeta.mcp_servers).map(s => `- ${s}`).join('\n') || 
 Source \`workspace.env\` for SDLC environment variables.
 `;
       await fs.writeFile(path.join(workspacePath, 'CLAUDE.md'), claudeMd, 'utf-8');
+
+      // Step 10b: Emit .cursorrules (Cursor equivalent of CLAUDE.md)
+      const cursorRules = `# Workspace: ${name}
+
+> Created: ${new Date().toISOString().slice(0, 10)} | Config: ${options.configName}
+
+## Context
+${options.storyTitle ? `Story: ${options.storyTitle} (${options.storyId})` : 'No story linked'}
+
+## Repositories
+${reposWithWorktrees.map(r => `- **${r.name}**: ${r.worktreePath ? path.join(hostWorkspacePath, r.name) : r.localPath}`).join('\n') || '(none)'}
+
+## MCP Servers
+${Object.keys(workspaceConfigMeta.mcp_servers).map(s => `- ${s}`).join('\n') || '(none configured)'}
+
+## Environment
+Source \`workspace.env\` for SDLC environment variables.
+
+## Limitations
+- Source repository edit guards (PreToolUse hooks) are not available in Cursor.
+  Use \`forge_repo_clone\` MCP tool to get isolated working copies before editing repo files.
+`;
+      await fs.writeFile(path.join(workspacePath, '.cursorrules'), cursorRules, 'utf-8');
 
       // Step 11: Register workspace in metadata store
       const metaStore = new WorkspaceMetadataStore(globalConfig.workspace.store_path);
