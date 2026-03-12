@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
-import { updateClaudeMcpServers } from '../mcp-settings-writer.js';
+import { updateClaudeMcpServers, updateCursorMcpServers } from '../mcp-settings-writer.js';
 
 describe('updateClaudeMcpServers', () => {
   let tmpDir: string;
@@ -220,5 +220,108 @@ describe('updateClaudeMcpServers', () => {
 
     expect(settings.permissions.allow).toEqual(['mcp__*']);
     expect(settings.permissions.deny).toBeUndefined();
+  });
+});
+
+describe('updateCursorMcpServers', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'forge-cursor-mcp-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('creates .cursor/mcp.json with mcpServers using url-only format', async () => {
+    await updateCursorMcpServers(
+      [{ name: 'anvil', url: 'http://localhost:8100' }],
+      tmpDir,
+    );
+
+    const raw = await fs.readFile(
+      path.join(tmpDir, '.cursor', 'mcp.json'),
+      'utf-8',
+    );
+    const settings = JSON.parse(raw);
+
+    expect(settings.mcpServers.anvil).toEqual({
+      url: 'http://localhost:8100/mcp',
+    });
+    // Cursor format should NOT have 'type' field
+    expect(settings.mcpServers.anvil.type).toBeUndefined();
+  });
+
+  it('preserves existing mcpServers entries', async () => {
+    const cursorDir = path.join(tmpDir, '.cursor');
+    await fs.mkdir(cursorDir, { recursive: true });
+    await fs.writeFile(
+      path.join(cursorDir, 'mcp.json'),
+      JSON.stringify({
+        mcpServers: { existing: { url: 'http://localhost:9999/mcp' } },
+      }),
+    );
+
+    await updateCursorMcpServers(
+      [{ name: 'anvil', url: 'http://localhost:8100' }],
+      tmpDir,
+    );
+
+    const raw = await fs.readFile(
+      path.join(cursorDir, 'mcp.json'),
+      'utf-8',
+    );
+    const settings = JSON.parse(raw);
+
+    expect(settings.mcpServers.existing.url).toBe('http://localhost:9999/mcp');
+    expect(settings.mcpServers.anvil.url).toBe('http://localhost:8100/mcp');
+  });
+
+  it('skips writing when server list is empty', async () => {
+    await updateCursorMcpServers([], tmpDir);
+
+    const exists = await fs.access(path.join(tmpDir, '.cursor', 'mcp.json'))
+      .then(() => true)
+      .catch(() => false);
+
+    expect(exists).toBe(false);
+  });
+
+  it('writes multiple servers in a single call', async () => {
+    await updateCursorMcpServers(
+      [
+        { name: 'anvil', url: 'http://localhost:8100' },
+        { name: 'vault', url: 'http://localhost:8300' },
+        { name: 'forge', url: 'http://localhost:8200' },
+      ],
+      tmpDir,
+    );
+
+    const raw = await fs.readFile(
+      path.join(tmpDir, '.cursor', 'mcp.json'),
+      'utf-8',
+    );
+    const settings = JSON.parse(raw);
+
+    expect(Object.keys(settings.mcpServers)).toEqual(['anvil', 'vault', 'forge']);
+    // No permissions section in Cursor format
+    expect(settings.permissions).toBeUndefined();
+  });
+
+  it('does not include permissions (Cursor has no permission model)', async () => {
+    await updateCursorMcpServers(
+      [{ name: 'anvil', url: 'http://localhost:8100' }],
+      tmpDir,
+    );
+
+    const raw = await fs.readFile(
+      path.join(tmpDir, '.cursor', 'mcp.json'),
+      'utf-8',
+    );
+    const settings = JSON.parse(raw);
+
+    expect(settings.permissions).toBeUndefined();
+    expect(settings.hooks).toBeUndefined();
   });
 });

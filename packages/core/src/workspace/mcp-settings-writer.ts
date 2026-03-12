@@ -209,6 +209,46 @@ exit 0
 }
 
 /**
+ * Write Cursor MCP server configuration to {workspacePath}/.cursor/mcp.json.
+ *
+ * Cursor uses a simpler format than Claude Code — just a url field per server
+ * for streamable HTTP transport:
+ *   "anvil": { "url": "http://localhost:8100/mcp" }
+ *
+ * Preserves existing entries in the file (only overwrites Forge-managed servers).
+ */
+export async function updateCursorMcpServers(
+  servers: McpServerEntry[],
+  workspacePath: string,
+): Promise<void> {
+  if (servers.length === 0) return;
+
+  const settingsPath = path.join(workspacePath, '.cursor', 'mcp.json');
+
+  let settings: Record<string, unknown> = {};
+  try {
+    const raw = await fs.readFile(settingsPath, 'utf-8');
+    settings = JSON.parse(raw);
+  } catch {
+    // File absent or unparseable — start fresh.
+  }
+
+  const mcpServers = (settings.mcpServers as Record<string, unknown>) ?? {};
+  for (const { name, url } of servers) {
+    const mcpUrl = url.replace(/\/+$/, '') + '/mcp';
+    mcpServers[name] = { url: mcpUrl };
+  }
+  settings.mcpServers = mcpServers;
+
+  await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+  await fs.writeFile(
+    settingsPath,
+    JSON.stringify(settings, null, 2) + '\n',
+    'utf-8',
+  );
+}
+
+/**
  * @deprecated No longer needed — native HTTP transport eliminates mcp-remote.
  * Retained to avoid breaking any code that imports this function.
  */
