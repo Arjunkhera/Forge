@@ -31,14 +31,17 @@ function toMdcContent(
 /**
  * Emits artifacts to Cursor format (.cursor/ directory structure).
  *
- * Skills emit to:   .cursor/rules/{id}.mdc
+ * Skills emit to:   .cursor/rules/{id}.mdc      (always-on context)
+ *                   .cursor/skills/{id}/SKILL.md (on-demand, structured instructions)
  * Agents emit to:   .cursor/rules/{id}.mdc
+ *                   .cursor/agents/{id}.md
  * Plugins: emits all contained skills and agents via dependencies
  *
  * @example
  * const strategy = new CursorStrategy();
  * const output = strategy.emit(resolvedSkill);
  * // output.operations[0].path === '.cursor/rules/developer.mdc'
+ * // output.operations[1].path === '.cursor/skills/developer/SKILL.md'
  */
 export class CursorStrategy implements EmitStrategy {
   readonly target = 'cursor' as const;
@@ -62,18 +65,32 @@ export class CursorStrategy implements EmitStrategy {
     }
 
     if (ref.type === 'skill') {
-      const rulePath = `.cursor/rules/${ref.id}.mdc`;
+      // Emit as Cursor rule (always-on context)
       operations.push({
-        path: rulePath,
+        path: `.cursor/rules/${ref.id}.mdc`,
         content: toMdcContent(bundle.meta, bundle.content),
         sourceRef: ref,
         operation: 'create',
       });
-    } else if (ref.type === 'agent') {
-      const rulePath = `.cursor/rules/${ref.id}.mdc`;
+      // Emit as Cursor skill (on-demand, structured instructions)
       operations.push({
-        path: rulePath,
+        path: `.cursor/skills/${ref.id}/SKILL.md`,
+        content: bundle.content,
+        sourceRef: ref,
+        operation: 'create',
+      });
+    } else if (ref.type === 'agent') {
+      // Emit as Cursor rule (always-on context)
+      operations.push({
+        path: `.cursor/rules/${ref.id}.mdc`,
         content: toMdcContent(bundle.meta, bundle.content),
+        sourceRef: ref,
+        operation: 'create',
+      });
+      // Emit as Cursor agent
+      operations.push({
+        path: `.cursor/agents/${ref.id}.md`,
+        content: bundle.content,
         sourceRef: ref,
         operation: 'create',
       });
