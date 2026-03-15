@@ -13,7 +13,7 @@ program
   .name('forge')
   .description('Package manager and compiler for AI agent workspaces')
   .version('0.1.0')
-  .option('--config <path>', 'Path to forge.yaml', process.cwd());
+  .option('--config <path>', 'Path to forge.yaml', process.env.FORGE_WORKSPACE_PATH ?? process.cwd());
 
 // forge init <name>
 program
