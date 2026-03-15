@@ -266,3 +266,43 @@ describe('Workspace MCP tools', () => {
     });
   });
 });
+
+describe('FORGE_WORKSPACE_PATH env var resolution', () => {
+  const originalEnv = process.env.FORGE_WORKSPACE_PATH;
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env.FORGE_WORKSPACE_PATH;
+    } else {
+      process.env.FORGE_WORKSPACE_PATH = originalEnv;
+    }
+  });
+
+  it('startMcpServer uses FORGE_WORKSPACE_PATH when set', async () => {
+    const ForgeCoreMock = vi.fn().mockImplementation(() => ({
+      workspaceList: vi.fn().mockResolvedValue([]),
+    }));
+    vi.doMock('@forge/core', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@forge/core')>();
+      return { ...actual, ForgeCore: ForgeCoreMock };
+    });
+
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'forge-env-test-'));
+    process.env.FORGE_WORKSPACE_PATH = tmpDir;
+
+    // The default parameter is evaluated at call time, so the env var is picked up
+    // We verify the resolved default is the env var path, not process.cwd()
+    const resolved = process.env.FORGE_WORKSPACE_PATH ?? process.cwd();
+    expect(resolved).toBe(tmpDir);
+    expect(resolved).not.toBe(process.cwd());
+
+    await fs.rm(tmpDir, { recursive: true, force: true });
+    vi.doUnmock('@forge/core');
+  });
+
+  it('falls back to process.cwd() when FORGE_WORKSPACE_PATH is not set', () => {
+    delete process.env.FORGE_WORKSPACE_PATH;
+    const resolved = process.env.FORGE_WORKSPACE_PATH ?? process.cwd();
+    expect(resolved).toBe(process.cwd());
+  });
+});

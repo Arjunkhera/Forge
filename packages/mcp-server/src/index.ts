@@ -572,7 +572,7 @@ function buildServer(workspaceRoot: string): Server {
  * Start the Forge MCP server on stdio transport.
  * Used for local Claude Code integration.
  */
-export async function startMcpServer(workspaceRoot: string = process.cwd()): Promise<void> {
+export async function startMcpServer(workspaceRoot: string = process.env.FORGE_WORKSPACE_PATH ?? process.cwd()): Promise<void> {
   const server = buildServer(workspaceRoot);
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -597,7 +597,7 @@ export interface HttpServerOptions {
  * Used in Docker via `forge serve --transport http`.
  */
 export async function startMcpServerHttp(opts: HttpServerOptions): Promise<void> {
-  const { port, host, workspaceRoot = process.cwd() } = opts;
+  const { port, host, workspaceRoot = process.env.FORGE_WORKSPACE_PATH ?? process.cwd() } = opts;
 
   // Session registry: maps sessionId -> { transport, lastSeen }
   const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -728,7 +728,7 @@ export async function startMcpServerHttp(opts: HttpServerOptions): Promise<void>
 // Auto-start if run directly via stdio (legacy behaviour)
 const isDirectRun = process.argv[1]?.endsWith('/index.ts') || process.argv[1]?.endsWith('\\index.ts');
 if (isDirectRun && typeof require !== 'undefined') {
-  startMcpServer(process.cwd()).catch(err => {
+  startMcpServer(process.env.FORGE_WORKSPACE_PATH ?? process.cwd()).catch(err => {
     console.error(err);
     process.exit(1);
   });
