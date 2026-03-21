@@ -135,7 +135,7 @@ export type GlobalPluginEntry = z.infer<typeof GlobalPluginEntrySchema>;
  * permissions (Claude Code treats local settings as authoritative when present).
  */
 export const ClaudePermissionsSchema = z.object({
-  allow: z.array(z.string()).default(['mcp__*']),
+  allow: z.array(z.string()).default(['mcp__*__*']),
   deny: z.array(z.string()).default([]),
 });
 
