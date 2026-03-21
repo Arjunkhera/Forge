@@ -28,11 +28,25 @@ export declare function updateClaudeMcpServers(servers: McpServerEntry[], worksp
  * .claude/settings.local.json that blocks Edit/Write operations targeting
  * source repo paths. Forces Claude to use forge_repo_clone for isolation.
  *
+ * Uses a git-based heuristic instead of hardcoded paths: any file inside a
+ * git repo is blocked UNLESS that repo root is inside a Horus workspace
+ * ($HORUS_DATA_DIR/workspaces/). This covers user repos, Horus-internal
+ * repos (knowledge-base, notes, registry), and any future repos automatically.
+ *
  * @param workspacePath   Container-side workspace root (where files are written)
  * @param hostWorkspacePath  Host-side workspace root (used in hook command path)
- * @param sourceReposPath Host-side path to source repositories (e.g., ~/Desktop/Repositories)
  */
-export declare function emitPreToolUseHook(workspacePath: string, hostWorkspacePath: string, sourceReposPath: string): Promise<void>;
+export declare function emitPreToolUseHook(workspacePath: string, hostWorkspacePath: string): Promise<void>;
+/**
+ * Write Cursor MCP server configuration to {workspacePath}/.cursor/mcp.json.
+ *
+ * Cursor uses a simpler format than Claude Code — just a url field per server
+ * for streamable HTTP transport:
+ *   "anvil": { "url": "http://localhost:8100/mcp" }
+ *
+ * Preserves existing entries in the file (only overwrites Forge-managed servers).
+ */
+export declare function updateCursorMcpServers(servers: McpServerEntry[], workspacePath: string): Promise<void>;
 /**
  * @deprecated No longer needed — native HTTP transport eliminates mcp-remote.
  * Retained to avoid breaking any code that imports this function.

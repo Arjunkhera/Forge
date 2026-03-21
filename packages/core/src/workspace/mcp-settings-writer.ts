@@ -183,7 +183,11 @@ exit 2
     // File absent or unparseable — start fresh.
   }
 
-  const hookCommand = `bash ${hostWorkspacePath}/.claude/scripts/guard-source-repos.sh`;
+  // Derive HORUS_DATA_DIR from the workspace path ($DATA_DIR/workspaces/$ID)
+  // and pass it explicitly so the guard script uses the correct value regardless
+  // of the user's environment (avoids the wrong $HOME/.horus/data default).
+  const horusDataDir = path.dirname(path.dirname(hostWorkspacePath));
+  const hookCommand = `HORUS_DATA_DIR=${JSON.stringify(horusDataDir)} bash ${hostWorkspacePath}/.claude/scripts/guard-source-repos.sh`;
 
   const hooks = (settings.hooks as Record<string, unknown[]>) ?? {};
   const preToolUse = (hooks.PreToolUse as Array<Record<string, unknown>>) ?? [];
