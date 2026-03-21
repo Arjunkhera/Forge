@@ -60,7 +60,7 @@ export async function updateClaudeMcpServers(
   // Merge permissions from claude_permissions config into the local file.
   // Without this, the mere existence of settings.local.json causes Claude Code to
   // treat the local permissions as authoritative, shadowing the global wildcard.
-  const configAllow = claudePermissions?.allow ?? ['mcp__*'];
+  const configAllow = claudePermissions?.allow ?? ['mcp__*__*'];
   const configDeny = claudePermissions?.deny ?? [];
 
   const permissions = (settings.permissions as Record<string, unknown>) ?? {};
